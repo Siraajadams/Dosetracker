@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function AddPatientPage() {
+  const router = useRouter();
+
   const [firstName, setFirstName] = useState("");
   const [surname, setSurname] = useState("");
   const [idNumber, setIdNumber] = useState("");
@@ -54,18 +57,7 @@ export default function AddPatientPage() {
         return;
       }
 
-      alert("Patient saved successfully.");
-
-      setFirstName("");
-      setSurname("");
-      setIdNumber("");
-      setMobileNumber("");
-      setGender("");
-      setCountry("");
-      setDoctor("");
-      setClinicSite("");
-      setMedication("Mounjaro");
-      setCurrentDose("");
+      router.push(`/dosetrack/patient/${patientClinicId}`);
     } catch (err) {
       console.error(err);
       alert("Failed to save patient.");
