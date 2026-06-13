@@ -35,20 +35,48 @@ export default function PatientProfilePage() {
   async function recordInjection() {
     if (!patient) return;
 
-    const { error } = await supabase.from("injections").insert([
-      {
-        patient_id: patient.id,
-        dose_given: patient.current_dose,
-        notes: "Injection recorded",
-      },
-    ]);
+    const today = new Date();
+    const nextWeek = new Date();
+    nextWeek.setDate(today.getDate() + 7);
 
-    if (error) {
-      alert(error.message);
+    const injectionDate = today.toISOString();
+    const nextInjectionDate = nextWeek.toISOString().split("T")[0];
+
+    const { error: injectionError } = await supabase
+      .from("injections")
+      .insert([
+        {
+          patient_id: patient.id,
+          injection_date: injectionDate,
+          next_injection_date: nextInjectionDate,
+          dose_given: patient.current_dose,
+          notes: "Weekly injection recorded",
+        },
+      ]);
+
+    if (injectionError) {
+      alert(injectionError.message);
       return;
     }
 
-    alert("Injection recorded successfully.");
+    const { error: appointmentError } = await supabase
+      .from("appointments")
+      .insert([
+        {
+          patient_id: patient.id,
+          appointment_date: nextInjectionDate,
+          appointment_time: "09:00",
+          appointment_type: "Weekly Injection",
+          status: "scheduled",
+        },
+      ]);
+
+    if (appointmentError) {
+      alert(appointmentError.message);
+      return;
+    }
+
+    alert("Injection recorded and next weekly appointment created.");
   }
 
   async function changeDose() {
@@ -99,6 +127,12 @@ export default function PatientProfilePage() {
     <main style={{ padding: 24 }}>
       <Link href="/dosetrack">
         <button style={{ marginBottom: 20 }}>← Back to Dashboard</button>
+      </Link>
+
+      <Link href="/dosetrack/calendar">
+        <button style={{ marginBottom: 20, marginLeft: 10 }}>
+          Open Injection Calendar
+        </button>
       </Link>
 
       <h1>
