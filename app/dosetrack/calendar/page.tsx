@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import Link from "next/link";
 
 export default function CalendarPage() {
   const [appointments, setAppointments] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(
+    new Date().toISOString().split("T")[0]
+  );
 
   useEffect(() => {
     loadAppointments();
@@ -21,147 +23,127 @@ export default function CalendarPage() {
           id,
           first_name,
           surname,
-          doctor,
+          mobile_number,
           clinic_site,
-          medication,
-          current_dose,
-          mobile_number
+          doctor,
+          current_dose
         )
       `)
       .order("appointment_date", { ascending: true });
 
-    if (error) {
-      console.error(error);
+    if (!error && data) {
+      setAppointments(data);
     }
-
-    setAppointments(data || []);
-    setLoading(false);
   }
 
-  async function markCompleted(id: string) {
-    const { error } = await supabase
-      .from("appointments")
-      .update({
-        status: "completed",
-      })
-      .eq("id", id);
+  const slots = [];
 
-    if (error) {
-      alert(error.message);
-      return;
+  for (let hour = 9; hour < 18; hour++) {
+    for (let minute = 0; minute < 60; minute += 15) {
+      const h = String(hour).padStart(2, "0");
+      const m = String(minute).padStart(2, "0");
+
+      slots.push(`${h}:${m}`);
     }
-
-    loadAppointments();
-  }
-
-  if (loading) {
-    return (
-      <main style={{ padding: 24 }}>
-        Loading Calendar...
-      </main>
-    );
   }
 
   return (
     <main style={{ padding: 24 }}>
       <Link href="/dosetrack">
-        <button
-          style={{
-            padding: 10,
-            marginBottom: 20,
-          }}
-        >
-          ← Back to Dashboard
-        </button>
+        <button>← Back to Dashboard</button>
       </Link>
 
-      <h1>Injection Calendar</h1>
+      <h1 style={{ marginTop: 20 }}>
+        Injection Calendar
+      </h1>
 
-      <p>
-        Weekly injection appointments scheduled automatically
-        after each recorded dose.
-      </p>
+      <div style={{ marginTop: 20 }}>
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+        />
+      </div>
 
       <div
         style={{
-          display: "grid",
-          gap: 16,
-          marginTop: 20,
+          marginTop: 30,
+          border: "1px solid #ddd",
         }}
       >
-        {appointments.length === 0 && (
-          <div>No upcoming appointments.</div>
-        )}
+        {slots.map((slot) => {
+          const appointment = appointments.find(
+            (a) =>
+              a.appointment_date === selectedDate &&
+              a.appointment_time?.substring(0, 5) === slot
+          );
 
-        {appointments.map((appointment) => (
-          <div
-            key={appointment.id}
-            style={{
-              border: "1px solid #ddd",
-              padding: 20,
-              borderRadius: 8,
-            }}
-          >
-            <h3>
-              {appointment.patients?.first_name}{" "}
-              {appointment.patients?.surname}
-            </h3>
-
-            <p>
-              <strong>Date:</strong>{" "}
-              {appointment.appointment_date}
-            </p>
-
-            <p>
-              <strong>Time:</strong>{" "}
-              {appointment.appointment_time}
-            </p>
-
-            <p>
-              <strong>Doctor:</strong>{" "}
-              {appointment.patients?.doctor}
-            </p>
-
-            <p>
-              <strong>Clinic:</strong>{" "}
-              {appointment.patients?.clinic_site}
-            </p>
-
-            <p>
-              <strong>Medication:</strong>{" "}
-              {appointment.patients?.medication}
-            </p>
-
-            <p>
-              <strong>Dose:</strong>{" "}
-              {appointment.patients?.current_dose}
-            </p>
-
-            <p>
-              <strong>Mobile:</strong>{" "}
-              {appointment.patients?.mobile_number}
-            </p>
-
-            <p>
-              <strong>Status:</strong>{" "}
-              {appointment.status}
-            </p>
-
-            <button
-              onClick={() => markCompleted(appointment.id)}
+          return (
+            <div
+              key={slot}
               style={{
-                padding: 10,
-                background: "#198754",
-                color: "white",
-                border: "none",
-                cursor: "pointer",
-                marginTop: 10,
+                display: "grid",
+                gridTemplateColumns: "120px 1fr",
+                borderBottom: "1px solid #eee",
+                minHeight: 70,
               }}
             >
-              Mark Completed
-            </button>
-          </div>
-        ))}
+              <div
+                style={{
+                  padding: 12,
+                  fontWeight: 600,
+                  borderRight: "1px solid #eee",
+                }}
+              >
+                {slot}
+              </div>
+
+              <div style={{ padding: 12 }}>
+                {appointment ? (
+                  <Link
+                    href={`/dosetrack/patient/${appointment.patient_id}`}
+                    style={{
+                      textDecoration: "none",
+                    }}
+                  >
+                    <div
+                      style={{
+                        background: "#d1ecf1",
+                        padding: 10,
+                        borderRadius: 6,
+                      }}
+                    >
+                      <strong>
+                        {appointment.patients?.first_name}{" "}
+                        {appointment.patients?.surname}
+                      </strong>
+
+                      <div>
+                        Dose: {appointment.patients?.current_dose}
+                      </div>
+
+                      <div>
+                        Doctor: {appointment.patients?.doctor}
+                      </div>
+
+                      <div>
+                        Site: {appointment.patients?.clinic_site}
+                      </div>
+
+                      <div>
+                        Mobile: {appointment.patients?.mobile_number}
+                      </div>
+                    </div>
+                  </Link>
+                ) : (
+                  <span style={{ color: "#999" }}>
+                    Available
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </main>
   );
