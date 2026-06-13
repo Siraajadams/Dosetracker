@@ -45,7 +45,7 @@ export default function AddPatientPage() {
           clinic_site: clinicSite,
           medication,
           current_dose: currentDose,
-          status: "Active",
+          status: "active",
         },
       ]);
 
