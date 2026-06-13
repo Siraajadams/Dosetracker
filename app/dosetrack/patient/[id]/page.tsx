@@ -1,50 +1,155 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
 
-export default function DoseTrackDashboard() {
+export default function PatientProfilePage() {
+  const params = useParams();
+  const patientId = params.id as string;
+
+  const [patient, setPatient] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadPatient();
+  }, []);
+
+  async function loadPatient() {
+    const { data, error } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("patient_clinic_id", patientId)
+      .single();
+
+    if (!error && data) {
+      setPatient(data);
+    }
+
+    setLoading(false);
+  }
+
+  if (loading) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h2>Loading patient...</h2>
+      </main>
+    );
+  }
+
+  if (!patient) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h2>Patient not found</h2>
+
+        <Link href="/dosetrack">
+          <button>Back to Dashboard</button>
+        </Link>
+      </main>
+    );
+  }
+
   return (
     <main style={{ padding: 24 }}>
-      <h1>DoseTrack Calendar</h1>
+      <Link href="/dosetrack">
+        <button style={{ marginBottom: 20 }}>
+          ← Back to Dashboard
+        </button>
+      </Link>
 
-      <p>Multi-site weekly injection scheduling and dose tracker.</p>
+      <h1>
+        {patient.first_name} {patient.surname}
+      </h1>
 
-      <div style={{ marginTop: 20 }}>
-        <Link href="/dosetrack/add-patient">
-          <button style={{ padding: 12 }}>Add New Patient</button>
-        </Link>
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          marginTop: 20,
+          maxWidth: 800,
+        }}
+      >
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Patient Clinic ID</strong>
+          <p>{patient.patient_clinic_id}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>ID / Passport Number</strong>
+          <p>{patient.id_number}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Mobile Number</strong>
+          <p>{patient.mobile_number}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Gender</strong>
+          <p>{patient.gender}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Country</strong>
+          <p>{patient.country}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Doctor</strong>
+          <p>{patient.doctor}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Clinic Site</strong>
+          <p>{patient.clinic_site}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Medication</strong>
+          <p>{patient.medication}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Current Dose</strong>
+          <p>{patient.current_dose}</p>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", padding: 16 }}>
+          <strong>Status</strong>
+          <p>{patient.status}</p>
+        </div>
       </div>
 
-      <section style={{ marginTop: 30 }}>
-        <h2>Dashboard</h2>
+      <div
+        style={{
+          marginTop: 30,
+          display: "flex",
+          gap: 12,
+        }}
+      >
+        <button
+          style={{
+            padding: 12,
+            background: "#000",
+            color: "#fff",
+            border: "none",
+          }}
+        >
+          Record Injection
+        </button>
 
-        <div style={{ display: "grid", gap: 12, maxWidth: 500 }}>
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Patient ID / ID Number</strong>
-            <p>Track clinic patient ID, SA ID number, or passport number.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Today's Injections</strong>
-            <p>View scheduled weekly injections.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Patients</strong>
-            <p>Track patient ID, ID number, doctor, site and dose plan.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Pen/Vial Tracker</strong>
-            <p>Track dose 1–6 for each assigned pen or vial.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Doctor Approvals</strong>
-            <p>Flag dose increases requiring approval.</p>
-          </div>
-        </div>
-      </section>
+        <button
+          style={{
+            padding: 12,
+            background: "#0d6efd",
+            color: "#fff",
+            border: "none",
+          }}
+        >
+          Change Dose
+        </button>
+      </div>
     </main>
   );
 }
