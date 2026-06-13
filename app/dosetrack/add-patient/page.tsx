@@ -8,6 +8,8 @@ export default function AddPatientPage() {
   const [surname, setSurname] = useState("");
   const [idNumber, setIdNumber] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
+  const [gender, setGender] = useState("");
+  const [country, setCountry] = useState("");
   const [doctor, setDoctor] = useState("");
   const [clinicSite, setClinicSite] = useState("");
   const [medication, setMedication] = useState("Mounjaro");
@@ -15,47 +17,58 @@ export default function AddPatientPage() {
   const [loading, setLoading] = useState(false);
 
   async function savePatient() {
+    if (!firstName || !surname || !idNumber || !mobileNumber) {
+      alert("Please complete first name, surname, ID number and mobile number.");
+      return;
+    }
+
+    if (!gender || !country || !doctor || !clinicSite || !currentDose) {
+      alert("Please select gender, country, doctor, clinic site and current dose.");
+      return;
+    }
+
     try {
       setLoading(true);
 
-      const patientClinicId =
-        "PT-" + Math.floor(Math.random() * 1000000);
+      const patientClinicId = "PT-" + Date.now();
 
-      const { error } = await supabase
-        .from("patients")
-        .insert([
-          {
-            patient_clinic_id: patientClinicId,
-            first_name: firstName,
-            surname,
-            id_number: idNumber,
-            mobile_number: mobileNumber,
-            doctor,
-            clinic_site: clinicSite,
-            medication,
-            current_dose: currentDose,
-            status: "Active",
-          },
-        ]);
+      const { error } = await supabase.from("patients").insert([
+        {
+          patient_clinic_id: patientClinicId,
+          first_name: firstName,
+          surname,
+          id_number: idNumber,
+          mobile_number: mobileNumber,
+          gender,
+          country,
+          doctor,
+          clinic_site: clinicSite,
+          medication,
+          current_dose: currentDose,
+          status: "Active",
+        },
+      ]);
 
       if (error) {
         alert(error.message);
         return;
       }
 
-      alert("Patient Saved Successfully");
+      alert("Patient saved successfully.");
 
       setFirstName("");
       setSurname("");
       setIdNumber("");
       setMobileNumber("");
+      setGender("");
+      setCountry("");
       setDoctor("");
       setClinicSite("");
       setMedication("Mounjaro");
       setCurrentDose("");
     } catch (err) {
       console.error(err);
-      alert("Failed to save patient");
+      alert("Failed to save patient.");
     } finally {
       setLoading(false);
     }
@@ -65,14 +78,7 @@ export default function AddPatientPage() {
     <main style={{ padding: 24 }}>
       <h1>Add Patient</h1>
 
-      <div
-        style={{
-          display: "grid",
-          gap: 12,
-          maxWidth: 700,
-          marginTop: 20,
-        }}
-      >
+      <div style={{ display: "grid", gap: 12, maxWidth: 700, marginTop: 20 }}>
         <input
           placeholder="First Name"
           value={firstName}
@@ -97,10 +103,22 @@ export default function AddPatientPage() {
           onChange={(e) => setMobileNumber(e.target.value)}
         />
 
-        <select
-          value={doctor}
-          onChange={(e) => setDoctor(e.target.value)}
-        >
+        <select value={gender} onChange={(e) => setGender(e.target.value)}>
+          <option value="">Select Gender</option>
+          <option>Female</option>
+          <option>Male</option>
+        </select>
+
+        <select value={country} onChange={(e) => setCountry(e.target.value)}>
+          <option value="">Select Country</option>
+          <option>England</option>
+          <option>New Zealand</option>
+          <option>Scotland</option>
+          <option>South Africa</option>
+          <option>Wales</option>
+        </select>
+
+        <select value={doctor} onChange={(e) => setDoctor(e.target.value)}>
           <option value="">Select Doctor</option>
           <option>Dr Khumalo</option>
           <option>Dr Jemma Salvage</option>
@@ -109,10 +127,7 @@ export default function AddPatientPage() {
           <option>Dr Ayesha Cassiem</option>
         </select>
 
-        <select
-          value={clinicSite}
-          onChange={(e) => setClinicSite(e.target.value)}
-        >
+        <select value={clinicSite} onChange={(e) => setClinicSite(e.target.value)}>
           <option value="">Select Clinic Site</option>
           <option>Authentic Aesthetics</option>
           <option>Palmyra Pharmacy</option>
@@ -122,20 +137,23 @@ export default function AddPatientPage() {
           <option>Medirite Olivedale</option>
         </select>
 
-        <select
-          value={medication}
-          onChange={(e) => setMedication(e.target.value)}
-        >
+        <select value={medication} onChange={(e) => setMedication(e.target.value)}>
           <option>Mounjaro</option>
           <option>Wegovy</option>
           <option>Ozempic</option>
         </select>
 
-        <input
-          placeholder="Current Dose"
-          value={currentDose}
-          onChange={(e) => setCurrentDose(e.target.value)}
-        />
+        <select value={currentDose} onChange={(e) => setCurrentDose(e.target.value)}>
+          <option value="">Select Current Dose</option>
+          <option>10mg</option>
+          <option>7.5mg</option>
+          <option>5mg</option>
+          <option>3.75mg</option>
+          <option>2.5mg</option>
+          <option>1mg</option>
+          <option>0.5mg</option>
+          <option>0.25mg</option>
+        </select>
 
         <button
           onClick={savePatient}
@@ -145,7 +163,7 @@ export default function AddPatientPage() {
             background: "#000",
             color: "#fff",
             border: "none",
-            cursor: "pointer",
+            cursor: loading ? "not-allowed" : "pointer",
           }}
         >
           {loading ? "Saving..." : "Save Patient"}
