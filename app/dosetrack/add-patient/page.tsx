@@ -35,29 +35,38 @@ export default function AddPatientPage() {
 
       const patientClinicId = "PT-" + Date.now();
 
-      const { error } = await supabase.from("patients").insert([
-        {
-          patient_clinic_id: patientClinicId,
-          first_name: firstName,
-          surname,
-          id_number: idNumber,
-          mobile_number: mobileNumber,
-          gender,
-          country,
-          doctor,
-          clinic_site: clinicSite,
-          medication,
-          current_dose: currentDose,
-          status: "active",
-        },
-      ]);
+      const { data, error } = await supabase
+        .from("patients")
+        .insert([
+          {
+            patient_clinic_id: patientClinicId,
+            first_name: firstName,
+            surname,
+            id_number: idNumber,
+            mobile_number: mobileNumber,
+            gender,
+            country,
+            doctor,
+            clinic_site: clinicSite,
+            medication,
+            current_dose: currentDose,
+            status: "active",
+          },
+        ])
+        .select()
+        .single();
 
       if (error) {
         alert(error.message);
         return;
       }
 
-      router.push(`/dosetrack/patient/${patientClinicId}`);
+      if (!data?.id) {
+        alert("Patient saved, but no patient ID was returned.");
+        return;
+      }
+
+      router.push(`/dosetrack/patient/${data.id}`);
     } catch (err) {
       console.error(err);
       alert("Failed to save patient.");
