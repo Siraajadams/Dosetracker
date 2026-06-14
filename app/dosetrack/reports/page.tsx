@@ -11,76 +11,114 @@ export default function ReportsPage() {
   const [patients, setPatients] = useState<any[]>([]);
   const [injections, setInjections] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
-  const [doseChanges, setDoseChanges] = useState<any[]>([]);
 
   useEffect(() => {
-    loadReport();
+    loadReports();
   }, [month]);
 
-  async function loadReport() {
+  async function loadReports() {
     setLoading(true);
 
-    const start = `${month}-01`;
-    const endDate = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0);
-    const end = endDate.toISOString().split("T")[0];
+    const startDate = `${month}-01`;
+    const endDate = new Date(
+      Number(month.split("-")[0]),
+      Number(month.split("-")[1]),
+      0
+    )
+      .toISOString()
+      .split("T")[0];
 
-    const { data: patientsData } = await supabase.from("patients").select("*");
+    const { data: patientsData } = await supabase
+      .from("patients")
+      .select("*")
+      .order("created_at", { ascending: false });
 
     const { data: injectionsData } = await supabase
       .from("injections")
-      .select("*, patients(*)")
-      .gte("injection_date", start)
-      .lte("injection_date", end);
+      .select("*")
+      .gte("injection_date", startDate)
+      .lte("injection_date", endDate);
 
     const { data: appointmentsData } = await supabase
       .from("appointments")
       .select("*, patients(*)")
-      .gte("appointment_date", start)
-      .lte("appointment_date", end);
-
-    const { data: doseChangesData } = await supabase
-      .from("dose_changes")
-      .select("*, patients(*)")
-      .gte("created_at", start)
-      .lte("created_at", end);
+      .gte("appointment_date", startDate)
+      .lte("appointment_date", endDate);
 
     setPatients(patientsData || []);
     setInjections(injectionsData || []);
     setAppointments(appointmentsData || []);
-    setDoseChanges(doseChangesData || []);
     setLoading(false);
   }
 
-  function countBy(items: any[], field: string) {
+  function groupCount(field: string) {
     const result: Record<string, number> = {};
 
-    items.forEach((item) => {
-      const key = item[field] || item.patients?.[field] || "Unknown";
+    patients.forEach((p) => {
+      const key = p[field] || "Not captured";
       result[key] = (result[key] || 0) + 1;
     });
 
-    return result;
+    return Object.entries(result);
   }
 
-  const completedAppointments = appointments.filter((a) => a.status === "completed");
-  const scheduledAppointments = appointments.filter((a) => a.status === "scheduled");
-  const missedAppointments = appointments.filter((a) => {
-    const today = new Date().toISOString().split("T")[0];
-    return a.status === "scheduled" && a.appointment_date < today;
-  });
+  function averageWeightLoss() {
+    const valid = patients.filter((p) => Number(p.weight_lost) > 0);
 
-  const injectionsBySite = countBy(appointments, "site");
-  const injectionsByDoctor = countBy(appointments, "doctor");
-  const injectionsByDose = countBy(injections, "dose_given");
-  const penDoseUsage = countBy(injections, "pen_dose_number");
+    if (valid.length === 0) return 0;
+
+    const total = valid.reduce(
+      (sum, p) => sum + Number(p.weight_lost || 0),
+      0
+    );
+
+    return Number((total / valid.length).toFixed(1));
+  }
+
+  const completedAppointments = appointments.filter(
+    (a) => a.status === "completed"
+  );
+
+  const scheduledAppointments = appointments.filter(
+    (a) => a.status === "scheduled"
+  );
+
+  const missedAppointments = appointments.filter(
+    (a) => a.status === "missed"
+  );
+
+  const pensOpened = patients.reduce(
+    (sum, p) => sum + Number(p.pen_number || 1),
+    0
+  );
+
+  const pensCompleted = injections.filter(
+    (i) => Number(i.dose_number) === 6
+  ).length;
 
   const cardStyle = {
-    background: "#fff",
+    background: "#ffffff",
     border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: 18,
+    borderRadius: 16,
+    padding: 20,
     boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
   };
+
+  const tableStyle = {
+    width: "100%",
+    borderCollapse: "collapse" as const,
+    marginTop: 12,
+  };
+
+  const cellStyle = {
+    borderBottom: "1px solid #e5e7eb",
+    padding: 10,
+    textAlign: "left" as const,
+  };
+
+  function printReport() {
+    window.print();
+  }
 
   return (
     <main
@@ -92,9 +130,7 @@ export default function ReportsPage() {
       }}
     >
       <Link href="/dosetrack">
-        <button style={{ padding: 10, borderRadius: 8, marginBottom: 20 }}>
-          ← Back to Dashboard
-        </button>
+        <button style={{ marginBottom: 20 }}>← Back to Dashboard</button>
       </Link>
 
       <section
@@ -103,98 +139,196 @@ export default function ReportsPage() {
           color: "white",
           padding: 28,
           borderRadius: 18,
-          marginBottom: 24,
+          marginBottom: 28,
         }}
       >
-        <h1 style={{ margin: 0 }}>Monthly Reports</h1>
-        <p>DoseTrack operational report for injections, sites, doctors and missed appointments.</p>
+        <h1 style={{ margin: 0, fontSize: 34 }}>Monthly Reports</h1>
+        <p>
+          DoseTrack operational report for injections, weight loss, doctors,
+          sites and pen utilisation.
+        </p>
 
-        <input
-          type="month"
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
-          style={{
-            padding: 12,
-            borderRadius: 10,
-            border: "none",
-            marginTop: 10,
-          }}
-        />
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "none",
+            }}
+          />
+
+          <button
+            onClick={loadReports}
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "none",
+            }}
+          >
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+
+          <button
+            onClick={printReport}
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "none",
+            }}
+          >
+            Print / Save PDF
+          </button>
+        </div>
       </section>
-
-      {loading && <p>Loading report...</p>}
 
       <section
         style={{
           display: "grid",
           gap: 16,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
           marginBottom: 28,
         }}
       >
-        {[
-          ["Total Patients", patients.length],
-          ["Injections Recorded", injections.length],
-          ["Completed Appointments", completedAppointments.length],
-          ["Scheduled Appointments", scheduledAppointments.length],
-          ["Missed Appointments", missedAppointments.length],
-          ["Dose Changes", doseChanges.length],
-        ].map(([title, value]) => (
-          <div key={title} style={cardStyle}>
-            <h3>{title}</h3>
-            <p style={{ fontSize: 28, fontWeight: "bold" }}>{value}</p>
-          </div>
-        ))}
+        <div style={cardStyle}>
+          <h3>Total Patients</h3>
+          <h1>{patients.length}</h1>
+        </div>
+
+        <div style={cardStyle}>
+          <h3>Injections Recorded</h3>
+          <h1>{injections.length}</h1>
+        </div>
+
+        <div style={cardStyle}>
+          <h3>Average Weight Loss</h3>
+          <h1>{averageWeightLoss()} kg</h1>
+        </div>
+
+        <div style={cardStyle}>
+          <h3>Scheduled Appointments</h3>
+          <h1>{scheduledAppointments.length}</h1>
+        </div>
+
+        <div style={cardStyle}>
+          <h3>Completed Appointments</h3>
+          <h1>{completedAppointments.length}</h1>
+        </div>
+
+        <div style={cardStyle}>
+          <h3>Missed Appointments</h3>
+          <h1>{missedAppointments.length}</h1>
+        </div>
+
+        <div style={cardStyle}>
+          <h3>Pens Opened</h3>
+          <h1>{pensOpened}</h1>
+        </div>
+
+        <div style={cardStyle}>
+          <h3>Pens Completed</h3>
+          <h1>{pensCompleted}</h1>
+        </div>
       </section>
 
-      <section style={{ display: "grid", gap: 20, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
-        <ReportTable title="Injections by Clinic Site" data={injectionsBySite} />
-        <ReportTable title="Injections by Doctor" data={injectionsByDoctor} />
-        <ReportTable title="Injections by Dose" data={injectionsByDose} />
-        <ReportTable title="Pen Dose Usage 1–6" data={penDoseUsage} />
+      <section
+        style={{
+          display: "grid",
+          gap: 20,
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+        }}
+      >
+        <div style={cardStyle}>
+          <h2>Patients by Dose</h2>
+          <table style={tableStyle}>
+            <tbody>
+              {groupCount("current_dose").map(([dose, count]) => (
+                <tr key={dose}>
+                  <td style={cellStyle}>{dose}</td>
+                  <td style={cellStyle}>{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={cardStyle}>
+          <h2>Patients by Doctor</h2>
+          <table style={tableStyle}>
+            <tbody>
+              {groupCount("doctor").map(([doctor, count]) => (
+                <tr key={doctor}>
+                  <td style={cellStyle}>{doctor}</td>
+                  <td style={cellStyle}>{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={cardStyle}>
+          <h2>Patients by Site</h2>
+          <table style={tableStyle}>
+            <tbody>
+              {groupCount("clinic_site").map(([site, count]) => (
+                <tr key={site}>
+                  <td style={cellStyle}>{site}</td>
+                  <td style={cellStyle}>{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={cardStyle}>
+          <h2>Pen Utilisation</h2>
+          <table style={tableStyle}>
+            <tbody>
+              {patients.map((patient) => (
+                <tr key={patient.id}>
+                  <td style={cellStyle}>
+                    {patient.first_name} {patient.surname}
+                  </td>
+                  <td style={cellStyle}>Pen {patient.pen_number || 1}</td>
+                  <td style={cellStyle}>Dose {patient.dose_number || 1} of 6</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
-    </main>
-  );
-}
 
-function ReportTable({ title, data }: { title: string; data: Record<string, number> }) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: "1px solid #e5e7eb",
-        borderRadius: 14,
-        padding: 18,
-        boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
-      }}
-    >
-      <h2>{title}</h2>
+      <section style={{ ...cardStyle, marginTop: 28 }}>
+        <h2>Weight Loss Summary</h2>
 
-      {Object.keys(data).length === 0 ? (
-        <p>No data for this month.</p>
-      ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={tableStyle}>
+          <thead>
+            <tr>
+              <th style={cellStyle}>Patient</th>
+              <th style={cellStyle}>Starting Weight</th>
+              <th style={cellStyle}>Current Weight</th>
+              <th style={cellStyle}>Weight Lost</th>
+              <th style={cellStyle}>BMI</th>
+            </tr>
+          </thead>
+
           <tbody>
-            {Object.entries(data).map(([label, count]) => (
-              <tr key={label}>
-                <td style={{ padding: 10, borderBottom: "1px solid #e5e7eb" }}>
-                  {label}
+            {patients.map((patient) => (
+              <tr key={patient.id}>
+                <td style={cellStyle}>
+                  {patient.first_name} {patient.surname}
                 </td>
-                <td
-                  style={{
-                    padding: 10,
-                    borderBottom: "1px solid #e5e7eb",
-                    textAlign: "right",
-                    fontWeight: "bold",
-                  }}
-                >
-                  {count}
-                </td>
+                <td style={cellStyle}>{patient.starting_weight || "-"} kg</td>
+                <td style={cellStyle}>{patient.current_weight || "-"} kg</td>
+                <td style={cellStyle}>{patient.weight_lost || 0} kg</td>
+                <td style={cellStyle}>{patient.bmi || "-"}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      )}
-    </div>
+      </section>
+    </main>
   );
 }
