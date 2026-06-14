@@ -78,6 +78,16 @@ export default function DoseTrackDashboard() {
     setLoading(false);
   }
 
+  const navButton = {
+    padding: 12,
+    borderRadius: 10,
+    border: "none",
+    background: "#ffffff",
+    color: "#0f172a",
+    fontWeight: "bold",
+    cursor: "pointer",
+  };
+
   const cardStyle = {
     background: "#ffffff",
     border: "1px solid #e5e7eb",
@@ -87,11 +97,12 @@ export default function DoseTrackDashboard() {
   };
 
   const dashboardCards = [
-    ["Patients", `${stats.totalPatients} active patients`],
-    ["Today’s Injections", `${stats.todaysInjections} scheduled today`],
-    ["Missed Appointments", `${stats.overdueAppointments} overdue`],
-    ["Pen/Vial Tracker", "Track dose 1–6 per pen"],
-    ["Doctor Approvals", `${stats.pendingApprovals} pending approvals`],
+    ["👥 Patients", `${stats.totalPatients} active patients`],
+    ["💉 Today’s Injections", `${stats.todaysInjections} scheduled today`],
+    ["⚠️ Missed Appointments", `${stats.overdueAppointments} overdue`],
+    ["🧪 Pen/Vial Tracker", "Track dose 1–6 per pen"],
+    ["👨‍⚕️ Doctor Approvals", `${stats.pendingApprovals} pending approvals`],
+    ["📊 Monthly Reports", "Clinic, doctor, injection and missed appointment reports"],
   ];
 
   return (
@@ -116,15 +127,27 @@ export default function DoseTrackDashboard() {
         <p>Multi-site weekly injection scheduling and GLP-1 dose tracker.</p>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <Link href="/dosetrack">
+            <button style={navButton}>🏠 Dashboard</button>
+          </Link>
+
           <Link href="/dosetrack/add-patient">
-            <button style={{ padding: 12, borderRadius: 10, border: "none" }}>
-              Add New Patient
-            </button>
+            <button style={navButton}>➕ Add Patient</button>
           </Link>
 
           <Link href="/dosetrack/calendar">
-            <button style={{ padding: 12, borderRadius: 10, border: "none" }}>
-              Injection Calendar
+            <button style={navButton}>📅 Injection Calendar</button>
+          </Link>
+
+          <Link href="/dosetrack/reports">
+            <button
+              style={{
+                ...navButton,
+                background: "#16a34a",
+                color: "white",
+              }}
+            >
+              📊 Monthly Reports
             </button>
           </Link>
         </div>
@@ -132,7 +155,9 @@ export default function DoseTrackDashboard() {
 
       <section style={cardStyle}>
         <h2>Find Existing Patient</h2>
-        <p>Use this when a patient arrives early, late or without checking the calendar.</p>
+        <p>
+          Use this when a patient arrives early, late or without checking the calendar.
+        </p>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input
@@ -155,6 +180,7 @@ export default function DoseTrackDashboard() {
               border: "none",
               background: "#2563eb",
               color: "white",
+              fontWeight: "bold",
             }}
           >
             {loading ? "Searching..." : "Search"}
@@ -182,6 +208,7 @@ export default function DoseTrackDashboard() {
                     border: "none",
                     background: "#0f766e",
                     color: "white",
+                    fontWeight: "bold",
                   }}
                 >
                   Open Patient Profile
@@ -206,6 +233,24 @@ export default function DoseTrackDashboard() {
             <div key={title} style={cardStyle}>
               <h3>{title}</h3>
               <p>{text}</p>
+
+              {title.includes("Monthly Reports") && (
+                <Link href="/dosetrack/reports">
+                  <button
+                    style={{
+                      marginTop: 10,
+                      padding: 10,
+                      background: "#16a34a",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 8,
+                      fontWeight: "bold",
+                    }}
+                  >
+                    Open Reports
+                  </button>
+                </Link>
+              )}
             </div>
           ))}
         </div>
