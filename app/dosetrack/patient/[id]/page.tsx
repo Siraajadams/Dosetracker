@@ -35,48 +35,71 @@ export default function PatientProfilePage() {
   async function recordInjection() {
     if (!patient) return;
 
-    const today = new Date();
-    const nextWeek = new Date();
-    nextWeek.setDate(today.getDate() + 7);
+    try {
+      const today = new Date();
 
-    const injectionDate = today.toISOString();
-    const nextInjectionDate = nextWeek.toISOString().split("T")[0];
+      const nextWeek = new Date(today);
+      nextWeek.setDate(today.getDate() + 7);
 
-    const { error: injectionError } = await supabase
-      .from("injections")
-      .insert([
-        {
-          patient_id: patient.id,
-          injection_date: injectionDate,
-          next_injection_date: nextInjectionDate,
-          dose_given: patient.current_dose,
-          notes: "Weekly injection recorded",
-        },
-      ]);
+      const injectionDate = today.toISOString();
+      const nextInjectionDate = nextWeek.toISOString().split("T")[0];
 
-    if (injectionError) {
-      alert(injectionError.message);
-      return;
+      const { data: previousInjections } = await supabase
+        .from("injections")
+        .select("id")
+        .eq("patient_id", patient.id);
+
+      const injectionCount = previousInjections?.length || 0;
+      const currentPenDose = (injectionCount % 6) + 1;
+      const nextPenDose = currentPenDose === 6 ? 1 : currentPenDose + 1;
+
+      const { error: injectionError } = await supabase
+        .from("injections")
+        .insert([
+          {
+            patient_id: patient.id,
+            injection_date: injectionDate,
+            next_injection_date: nextInjectionDate,
+            dose_given: patient.current_dose,
+            pen_dose_number: currentPenDose,
+            notes: `Dose ${currentPenDose} of 6 recorded`,
+          },
+        ]);
+
+      if (injectionError) {
+        alert(injectionError.message);
+        return;
+      }
+
+      const { error: appointmentError } = await supabase
+        .from("appointments")
+        .insert([
+          {
+            patient_id: patient.id,
+            appointment_date: nextInjectionDate,
+            appointment_time: "09:00",
+            duration_minutes: 15,
+            appointment_type: "Weekly Injection",
+            status: "scheduled",
+            site: patient.clinic_site,
+            doctor: patient.doctor,
+            pen_dose_number: nextPenDose,
+            recurring_weekly: true,
+          },
+        ]);
+
+      if (appointmentError) {
+        alert(appointmentError.message);
+        return;
+      }
+
+      alert(
+        `Injection recorded successfully.\n\nDose ${currentPenDose} of 6.\nNext appointment created for ${nextInjectionDate}.`
+      );
+    } catch (error) {
+      console.error(error);
+      alert("Failed to record injection.");
     }
-
-    const { error: appointmentError } = await supabase
-      .from("appointments")
-      .insert([
-        {
-          patient_id: patient.id,
-          appointment_date: nextInjectionDate,
-          appointment_time: "09:00",
-          appointment_type: "Weekly Injection",
-          status: "scheduled",
-        },
-      ]);
-
-    if (appointmentError) {
-      alert(appointmentError.message);
-      return;
-    }
-
-    alert("Injection recorded and next weekly appointment created.");
   }
 
   async function changeDose() {
