@@ -5,7 +5,16 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
 
-const doses = ["10mg", "7.5mg", "5mg", "3.75mg", "2.5mg", "1mg", "0.5mg", "0.25mg"];
+const doseOptions = [
+  "10mg",
+  "7.5mg",
+  "5mg",
+  "3.75mg",
+  "2.5mg",
+  "1mg",
+  "0.5mg",
+  "0.25mg",
+];
 
 export default function PatientProfilePage() {
   const params = useParams();
@@ -29,7 +38,6 @@ export default function PatientProfilePage() {
     if (error) console.error(error);
 
     setPatient(data);
-    setNewDose(data?.current_dose || "");
     setLoading(false);
   }
 
@@ -37,29 +45,28 @@ export default function PatientProfilePage() {
     if (!patient) return;
 
     const today = new Date();
-    const nextWeek = new Date(today);
+    const nextWeek = new Date();
     nextWeek.setDate(today.getDate() + 7);
 
     const injectionDate = today.toISOString();
-    const nextInjectionDate = nextWeek.toISOString().split("T")[0];
+    const nextAppointmentDate = nextWeek.toISOString().split("T")[0];
 
-    const { data: previousInjections } = await supabase
-      .from("injections")
-      .select("id")
-      .eq("patient_id", patient.id);
+    const currentDoseNumber = patient.dose_number || 1;
+    const currentPenNumber = patient.pen_number || 1;
 
-    const injectionCount = previousInjections?.length || 0;
-    const currentPenDose = (injectionCount % 6) + 1;
-    const nextPenDose = currentPenDose === 6 ? 1 : currentPenDose + 1;
+    const nextDoseNumber = currentDoseNumber >= 6 ? 1 : currentDoseNumber + 1;
+    const nextPenNumber =
+      currentDoseNumber >= 6 ? currentPenNumber + 1 : currentPenNumber;
 
     const { error: injectionError } = await supabase.from("injections").insert([
       {
         patient_id: patient.id,
         injection_date: injectionDate,
-        next_injection_date: nextInjectionDate,
+        next_injection_date: nextAppointmentDate,
         dose_given: patient.current_dose,
-        pen_dose_number: currentPenDose,
-        notes: `Dose ${currentPenDose} of 6 recorded`,
+        dose_number: currentDoseNumber,
+        pen_number: currentPenNumber,
+        notes: "Weekly injection recorded",
       },
     ]);
 
@@ -68,33 +75,48 @@ export default function PatientProfilePage() {
       return;
     }
 
-    const { error: appointmentError } = await supabase.from("appointments").insert([
-      {
-        patient_id: patient.id,
-        appointment_date: nextInjectionDate,
-        appointment_time: "09:00",
-        duration_minutes: 15,
-        status: "scheduled",
-        site: patient.clinic_site,
-        doctor: patient.doctor,
-        pen_dose_number: nextPenDose,
-        recurring_weekly: true,
-      },
-    ]);
+    const { error: appointmentError } = await supabase
+      .from("appointments")
+      .insert([
+        {
+          patient_id: patient.id,
+          appointment_date: nextAppointmentDate,
+          appointment_time: "09:00",
+          status: "scheduled",
+        },
+      ]);
 
     if (appointmentError) {
       alert(appointmentError.message);
       return;
     }
 
+    const { error: updateError } = await supabase
+      .from("patients")
+      .update({
+        next_appointment_date: nextAppointmentDate,
+        dose_number: nextDoseNumber,
+        pen_number: nextPenNumber,
+      })
+      .eq("id", patient.id);
+
+    if (updateError) {
+      alert(updateError.message);
+      return;
+    }
+
     alert(
-      `Injection recorded successfully.\n\nDose ${currentPenDose} of 6.\nNext appointment created for ${nextInjectionDate}.`
+      `Injection recorded successfully.\n\nDose ${currentDoseNumber} of 6.\nNext appointment created for ${nextAppointmentDate}.`
     );
+
+    loadPatient();
   }
 
   async function changeDose() {
-    if (!patient || !newDose) {
-      alert("Please select the new prescribed dose.");
+    if (!patient) return;
+
+    if (!newDose) {
+      alert("Please select a new dose.");
       return;
     }
 
@@ -103,7 +125,7 @@ export default function PatientProfilePage() {
         patient_id: patient.id,
         old_dose: patient.current_dose,
         new_dose: newDose,
-        status: "completed",
+        status: "pending",
       },
     ]);
 
@@ -122,15 +144,24 @@ export default function PatientProfilePage() {
       return;
     }
 
-    alert("Patient dose updated successfully.");
+    alert("Dose changed and logged for audit.");
+    setNewDose("");
     loadPatient();
   }
 
-  if (loading) return <main style={{ padding: 24 }}>Loading patient...</main>;
-  if (!patient) return <main style={{ padding: 24 }}>Patient not found.</main>;
+  if (loading) {
+    return <main style={{ padding: 24 }}>Loading patient...</main>;
+  }
+
+  if (!patient) {
+    return <main style={{ padding: 24 }}>Patient not found.</main>;
+  }
+
+  const weightLost =
+    Number(patient.starting_weight || 0) - Number(patient.current_weight || 0);
 
   const cardStyle = {
-    background: "#fff",
+    background: "#ffffff",
     border: "1px solid #e5e7eb",
     borderRadius: 14,
     padding: 18,
@@ -148,11 +179,15 @@ export default function PatientProfilePage() {
     >
       <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
         <Link href="/dosetrack">
-          <button style={{ padding: 10, borderRadius: 8 }}>← Dashboard</button>
+          <button>← Back to Dashboard</button>
         </Link>
 
         <Link href="/dosetrack/calendar">
-          <button style={{ padding: 10, borderRadius: 8 }}>Open Calendar</button>
+          <button>Open Injection Calendar</button>
+        </Link>
+
+        <Link href="/dosetrack/reports">
+          <button>Monthly Reports</button>
         </Link>
       </div>
 
@@ -168,86 +203,149 @@ export default function PatientProfilePage() {
         <h1 style={{ margin: 0 }}>
           {patient.first_name} {patient.surname}
         </h1>
-        <p>Weekly GLP-1 injection profile and dose tracking.</p>
-        <strong>Current Dose: {patient.current_dose}</strong>
+        <p>
+          {patient.clinic_site} | {patient.doctor} | Current Dose:{" "}
+          {patient.current_dose}
+        </p>
       </section>
 
       <section
         style={{
           display: "grid",
-          gap: 14,
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gap: 16,
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
         }}
       >
-        {[
-          ["Patient Clinic ID", patient.patient_clinic_id],
-          ["ID / Passport Number", patient.id_number],
-          ["Mobile Number", patient.mobile_number],
-          ["Gender", patient.gender],
-          ["Country", patient.country],
-          ["Doctor", patient.doctor],
-          ["Clinic Site", patient.clinic_site],
-          ["Medication", patient.medication],
-          ["Status", patient.status],
-        ].map(([label, value]) => (
-          <div key={label} style={cardStyle}>
-            <strong>{label}</strong>
-            <p>{value || "-"}</p>
-          </div>
-        ))}
+        <div style={cardStyle}>
+          <strong>Patient Clinic ID</strong>
+          <p>{patient.patient_clinic_id}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>ID / Passport</strong>
+          <p>{patient.id_number}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Mobile</strong>
+          <p>{patient.mobile_number}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>DOB / Age</strong>
+          <p>
+            {patient.dob || "Not captured"} / {patient.age || "-"} years
+          </p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Gender</strong>
+          <p>{patient.gender}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Country</strong>
+          <p>{patient.country}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Height</strong>
+          <p>{patient.height_cm || "-"} cm</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Starting Weight</strong>
+          <p>{patient.starting_weight || "-"} kg</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Current Weight</strong>
+          <p>{patient.current_weight || "-"} kg</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Weight Lost</strong>
+          <p>{weightLost.toFixed(1)} kg</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>BMI</strong>
+          <p>{patient.bmi || "-"}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Next Appointment</strong>
+          <p>{patient.next_appointment_date || "Not scheduled"}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Pen Number</strong>
+          <p>Pen {patient.pen_number || 1}</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Dose Number</strong>
+          <p>Dose {patient.dose_number || 1} of 6</p>
+        </div>
+
+        <div style={cardStyle}>
+          <strong>Status</strong>
+          <p>{patient.status}</p>
+        </div>
       </section>
 
       <section
         style={{
           marginTop: 28,
           display: "grid",
-          gap: 20,
+          gap: 18,
           gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
         }}
       >
         <div style={cardStyle}>
-          <h2>1. Record Today&apos;s Injection</h2>
+          <h2>Record Today’s Injection</h2>
           <p>
-            Use this when the patient has received today&apos;s injection. This will
-            date-stamp the injection and create the next weekly appointment.
+            Use this after the patient receives their weekly injection. This
+            records the dose, updates dose number, tracks pen usage and creates
+            next week’s appointment.
           </p>
 
           <button
             onClick={recordInjection}
             style={{
-              padding: 14,
               width: "100%",
-              borderRadius: 10,
-              border: "none",
+              padding: 14,
               background: "#0f766e",
               color: "white",
+              border: "none",
+              borderRadius: 10,
               fontWeight: "bold",
             }}
           >
-            Confirm Injection Given Today
+            Record Injection Given Today
           </button>
         </div>
 
         <div style={cardStyle}>
-          <h2>2. Change Prescribed Dose</h2>
+          <h2>Change Dose</h2>
           <p>
-            Use this only when the doctor has changed the patient&apos;s dose plan.
-            This updates the patient profile.
+            Use this only when the doctor changes the patient’s prescribed dose.
+            The change is logged for audit and monthly reporting.
           </p>
 
           <select
             value={newDose}
             onChange={(e) => setNewDose(e.target.value)}
             style={{
-              padding: 12,
               width: "100%",
+              padding: 12,
               borderRadius: 10,
               border: "1px solid #cbd5e1",
               marginBottom: 12,
             }}
           >
-            <option value="">Select New Prescribed Dose</option>
-            {doses.map((dose) => (
+            <option value="">Select New Dose</option>
+            {doseOptions.map((dose) => (
               <option key={dose}>{dose}</option>
             ))}
           </select>
@@ -255,16 +353,16 @@ export default function PatientProfilePage() {
           <button
             onClick={changeDose}
             style={{
-              padding: 14,
               width: "100%",
-              borderRadius: 10,
-              border: "none",
+              padding: 14,
               background: "#2563eb",
               color: "white",
+              border: "none",
+              borderRadius: 10,
               fontWeight: "bold",
             }}
           >
-            Update Patient Dose Plan
+            Confirm Dose Change
           </button>
         </div>
       </section>
