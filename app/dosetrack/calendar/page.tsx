@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
 const sites = [
-  "All Sites",
   "Authentic Aesthetics",
   "Palmyra Pharmacy",
   "Medirite Langverwacht",
@@ -15,7 +14,6 @@ const sites = [
 ];
 
 const doctors = [
-  "All Doctors",
   "Dr Khumalo",
   "Dr Jemma Salvage",
   "Dr Chika",
@@ -23,283 +21,330 @@ const doctors = [
   "Dr Ayesha Cassiem",
 ];
 
-const siteColors: Record<string, string> = {
-  "Authentic Aesthetics": "#d1ecf1",
-  "Palmyra Pharmacy": "#d4edda",
-  "Medirite Langverwacht": "#fff3cd",
-  "Medirite St Johns": "#f8d7da",
-  "Medirite Dasport": "#e2e3e5",
-  "Medirite Olivedale": "#d6d8ff",
-};
+const slots = Array.from({ length: 37 }, (_, i) => {
+  const total = 9 * 60 + i * 15;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+});
 
-export default function CalendarPage() {
-  const [appointments, setAppointments] = useState<any[]>([]);
-  const [view, setView] = useState<"day" | "week" | "month">("day");
+export default function InjectionCalendarPage() {
+  const [view, setView] = useState("day");
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().split("T")[0]
   );
-  const [siteFilter, setSiteFilter] = useState("All Sites");
-  const [doctorFilter, setDoctorFilter] = useState("All Doctors");
+  const [site, setSite] = useState("");
+  const [doctor, setDoctor] = useState("");
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     loadAppointments();
-  }, []);
+  }, [selectedDate, site, doctor, view]);
+
+  function getRange() {
+    const date = new Date(selectedDate);
+    let start = new Date(date);
+    let end = new Date(date);
+
+    if (view === "week") {
+      const day = date.getDay();
+      start.setDate(date.getDate() - day);
+      end.setDate(start.getDate() + 6);
+    }
+
+    if (view === "month") {
+      start = new Date(date.getFullYear(), date.getMonth(), 1);
+      end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+    }
+
+    return {
+      start: start.toISOString().split("T")[0],
+      end: end.toISOString().split("T")[0],
+    };
+  }
 
   async function loadAppointments() {
-    const { data, error } = await supabase
+    setLoading(true);
+
+    const range = getRange();
+
+    let query = supabase
       .from("appointments")
-      .select(`
+      .select(
+        `
         *,
         patients (
           id,
           first_name,
           surname,
           mobile_number,
-          doctor,
-          clinic_site,
+          current_dose,
           medication,
-          current_dose
+          patient_clinic_id
         )
-      `)
-      .order("appointment_date", { ascending: true })
-      .order("appointment_time", { ascending: true });
+      `
+      )
+      .gte("appointment_date", range.start)
+      .lte("appointment_date", range.end)
+      .order("appointment_date")
+      .order("appointment_time");
+
+    if (site) query = query.eq("site", site);
+    if (doctor) query = query.eq("doctor", doctor);
+
+    const { data, error } = await query;
 
     if (error) {
       alert(error.message);
+      setLoading(false);
       return;
     }
 
     setAppointments(data || []);
+    setLoading(false);
   }
 
-  async function markCompleted(id: string) {
+  async function markCompleted(appointment: any) {
     const { error } = await supabase
       .from("appointments")
       .update({ status: "completed" })
-      .eq("id", id);
+      .eq("id", appointment.id);
 
     if (error) {
       alert(error.message);
       return;
     }
 
+    alert("Appointment marked as completed.");
     loadAppointments();
   }
 
-  const slots = useMemo(() => {
-    const arr: string[] = [];
-    for (let hour = 9; hour <= 18; hour++) {
-      for (let minute = 0; minute < 60; minute += 15) {
-        if (hour === 18 && minute > 0) continue;
-        arr.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
-      }
-    }
-    return arr;
-  }, []);
-
-  function getWeekDates(dateString: string) {
-    const date = new Date(dateString);
-    const day = date.getDay();
-    const monday = new Date(date);
-    monday.setDate(date.getDate() - ((day + 6) % 7));
-
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return d.toISOString().split("T")[0];
-    });
-  }
-
-  function getMonthDates(dateString: string) {
-    const date = new Date(dateString);
-    const year = date.getFullYear();
-    const month = date.getMonth();
-
-    const days = new Date(year, month + 1, 0).getDate();
-
-    return Array.from({ length: days }, (_, i) => {
-      const d = new Date(year, month, i + 1);
-      return d.toISOString().split("T")[0];
-    });
-  }
-
-  function filteredAppointments(date?: string, time?: string) {
-    return appointments.filter((a) => {
-      const site = a.site || a.patients?.clinic_site;
-      const doctor = a.doctor || a.patients?.doctor;
-
-      if (siteFilter !== "All Sites" && site !== siteFilter) return false;
-      if (doctorFilter !== "All Doctors" && doctor !== doctorFilter) return false;
-      if (date && a.appointment_date !== date) return false;
-      if (time && a.appointment_time?.substring(0, 5) !== time) return false;
-
-      return true;
-    });
-  }
-
-  function isMissed(a: any) {
-    const now = new Date();
-    const appointmentDateTime = new Date(`${a.appointment_date}T${a.appointment_time || "09:00"}`);
-    return appointmentDateTime < now && a.status === "scheduled";
-  }
-
-  function AppointmentCard({ appointment }: { appointment: any }) {
-    const site = appointment.site || appointment.patients?.clinic_site;
-    const bg = isMissed(appointment) ? "#ffcccc" : siteColors[site] || "#eee";
-
-    return (
-      <div style={{ background: bg, padding: 10, borderRadius: 6, marginBottom: 8 }}>
-        <Link href={`/dosetrack/patient/${appointment.patient_id}`}>
-          <strong>
-            {appointment.patients?.first_name} {appointment.patients?.surname}
-          </strong>
-        </Link>
-
-        <div>Dose: {appointment.patients?.current_dose}</div>
-        <div>Pen dose: {appointment.pen_dose_number || "-"} of 6</div>
-        <div>Doctor: {appointment.doctor || appointment.patients?.doctor}</div>
-        <div>Site: {site}</div>
-        <div>Mobile: {appointment.patients?.mobile_number}</div>
-        <div>Status: {isMissed(appointment) ? "MISSED / OVERDUE" : appointment.status}</div>
-
-        {appointment.status !== "completed" && (
-          <button
-            onClick={() => markCompleted(appointment.id)}
-            style={{ marginTop: 8, padding: 8 }}
-          >
-            Mark Completed
-          </button>
-        )}
-      </div>
+  function getAppointment(date: string, time: string) {
+    return appointments.find(
+      (a) =>
+        a.appointment_date === date &&
+        String(a.appointment_time).slice(0, 5) === time &&
+        a.status !== "completed"
     );
   }
 
-  const dates =
-    view === "day"
-      ? [selectedDate]
-      : view === "week"
-      ? getWeekDates(selectedDate)
-      : getMonthDates(selectedDate);
+  function getDates() {
+    const range = getRange();
+    const dates = [];
+    const start = new Date(range.start);
+    const end = new Date(range.end);
+
+    while (start <= end) {
+      dates.push(start.toISOString().split("T")[0]);
+      start.setDate(start.getDate() + 1);
+    }
+
+    return dates;
+  }
+
+  const dates = getDates();
 
   return (
-    <main style={{ padding: 24 }}>
+    <main
+      style={{
+        minHeight: "100vh",
+        padding: 24,
+        background: "linear-gradient(135deg, #eef7ff, #f8fafc)",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       <Link href="/dosetrack">
-        <button>← Back to Dashboard</button>
+        <button style={{ padding: 10, borderRadius: 8, marginBottom: 20 }}>
+          ← Back to Dashboard
+        </button>
       </Link>
 
-      <h1>Injection Calendar</h1>
+      <section
+        style={{
+          background: "linear-gradient(135deg, #0f766e, #2563eb)",
+          color: "white",
+          padding: 26,
+          borderRadius: 18,
+          marginBottom: 20,
+        }}
+      >
+        <h1 style={{ margin: 0 }}>Injection Calendar</h1>
+        <p>
+          Reception calendar for weekly GLP-1 injections. Each slot is 15
+          minutes from 09:00 to 18:00.
+        </p>
+      </section>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 20 }}>
-        <select value={view} onChange={(e) => setView(e.target.value as any)}>
-          <option value="day">Day View</option>
-          <option value="week">Week View</option>
-          <option value="month">Month View</option>
-        </select>
+      <section
+        style={{
+          background: "white",
+          padding: 18,
+          borderRadius: 14,
+          marginBottom: 20,
+          boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+        }}
+      >
+        <h3>Next steps for reception</h3>
+        <p>
+          1. Select the day, week or month. 2. Filter by site or doctor. 3. Open
+          the patient profile or mark the appointment completed after the dose is
+          given.
+        </p>
 
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={(e) => setSelectedDate(e.target.value)}
-        />
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <select value={view} onChange={(e) => setView(e.target.value)}>
+            <option value="day">Day View</option>
+            <option value="week">Week View</option>
+            <option value="month">Month View</option>
+          </select>
 
-        <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}>
-          {sites.map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+          />
 
-        <select value={doctorFilter} onChange={(e) => setDoctorFilter(e.target.value)}>
-          {doctors.map((d) => (
-            <option key={d}>{d}</option>
-          ))}
-        </select>
+          <select value={site} onChange={(e) => setSite(e.target.value)}>
+            <option value="">All Sites</option>
+            {sites.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
 
-        <button onClick={loadAppointments}>Refresh</button>
-      </div>
+          <select value={doctor} onChange={(e) => setDoctor(e.target.value)}>
+            <option value="">All Doctors</option>
+            {doctors.map((d) => (
+              <option key={d}>{d}</option>
+            ))}
+          </select>
 
-      {view === "day" && (
-        <div style={{ marginTop: 20, border: "1px solid #ddd" }}>
-          {slots.map((slot) => {
-            const items = filteredAppointments(selectedDate, slot);
-
-            return (
-              <div
-                key={slot}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "100px 1fr",
-                  borderBottom: "1px solid #eee",
-                  minHeight: 70,
-                }}
-              >
-                <div style={{ padding: 12, borderRight: "1px solid #eee" }}>
-                  {slot}
-                </div>
-
-                <div style={{ padding: 12 }}>
-                  {items.length === 0 ? (
-                    <span style={{ color: "#999" }}>Available</span>
-                  ) : (
-                    items.map((a) => <AppointmentCard key={a.id} appointment={a} />)
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          <button onClick={loadAppointments}>Refresh</button>
         </div>
-      )}
+      </section>
 
-      {view === "week" && (
-        <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "100px repeat(7, 1fr)", border: "1px solid #ddd" }}>
-          <div style={{ padding: 10 }}></div>
+      {loading && <p>Loading calendar...</p>}
 
-          {dates.map((date) => (
-            <div key={date} style={{ padding: 10, fontWeight: 700, borderLeft: "1px solid #ddd" }}>
-              {date}
-            </div>
-          ))}
+      <section
+        style={{
+          overflowX: "auto",
+          background: "white",
+          borderRadius: 14,
+          padding: 16,
+          boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+        }}
+      >
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            minWidth: view === "day" ? 700 : 1100,
+          }}
+        >
+          <thead>
+            <tr>
+              <th style={thStyle}>Time</th>
+              {dates.map((date) => (
+                <th key={date} style={thStyle}>
+                  {date}
+                </th>
+              ))}
+            </tr>
+          </thead>
 
-          {slots.map((slot) => (
-            <>
-              <div key={`${slot}-time`} style={{ padding: 10, borderTop: "1px solid #eee" }}>
-                {slot}
-              </div>
+          <tbody>
+            {slots.map((time) => (
+              <tr key={time}>
+                <td style={tdStyle}>
+                  <strong>{time}</strong>
+                </td>
 
-              {dates.map((date) => {
-                const items = filteredAppointments(date, slot);
+                {dates.map((date) => {
+                  const appointment = getAppointment(date, time);
 
-                return (
-                  <div key={`${date}-${slot}`} style={{ padding: 8, borderTop: "1px solid #eee", borderLeft: "1px solid #eee", minHeight: 80 }}>
-                    {items.map((a) => <AppointmentCard key={a.id} appointment={a} />)}
-                  </div>
-                );
-              })}
-            </>
-          ))}
-        </div>
-      )}
+                  return (
+                    <td key={`${date}-${time}`} style={tdStyle}>
+                      {appointment ? (
+                        <div
+                          style={{
+                            padding: 10,
+                            borderRadius: 10,
+                            background: "#e0f2fe",
+                            borderLeft: "5px solid #2563eb",
+                          }}
+                        >
+                          <strong>
+                            {appointment.patients?.first_name}{" "}
+                            {appointment.patients?.surname}
+                          </strong>
 
-      {view === "month" && (
-        <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10 }}>
-          {dates.map((date) => {
-            const items = filteredAppointments(date);
+                          <p style={{ margin: "6px 0" }}>
+                            {appointment.patients?.current_dose} |{" "}
+                            {appointment.site}
+                          </p>
 
-            return (
-              <div key={date} style={{ border: "1px solid #ddd", minHeight: 160, padding: 10 }}>
-                <strong>{date}</strong>
+                          <p style={{ margin: "6px 0" }}>
+                            {appointment.doctor}
+                          </p>
 
-                <div style={{ marginTop: 8 }}>
-                  {items.length === 0 ? (
-                    <span style={{ color: "#999" }}>No injections</span>
-                  ) : (
-                    items.map((a) => <AppointmentCard key={a.id} appointment={a} />)
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <Link
+                              href={`/dosetrack/patient/${appointment.patient_id}`}
+                            >
+                              <button style={smallButton}>Open</button>
+                            </Link>
+
+                            <button
+                              onClick={() => markCompleted(appointment)}
+                              style={{
+                                ...smallButton,
+                                background: "#16a34a",
+                                color: "white",
+                              }}
+                            >
+                              Mark Completed
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={{ color: "#94a3b8" }}>Available</span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </main>
   );
 }
+
+const thStyle = {
+  border: "1px solid #e5e7eb",
+  padding: 12,
+  background: "#f1f5f9",
+  textAlign: "left" as const,
+};
+
+const tdStyle = {
+  border: "1px solid #e5e7eb",
+  padding: 10,
+  verticalAlign: "top" as const,
+};
+
+const smallButton = {
+  padding: "6px 10px",
+  borderRadius: 6,
+  border: "none",
+  background: "#2563eb",
+  color: "white",
+  cursor: "pointer",
+};
