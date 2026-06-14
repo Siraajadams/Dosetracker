@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -8,6 +8,49 @@ export default function DoseTrackDashboard() {
   const [search, setSearch] = useState("");
   const [patients, setPatients] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const [stats, setStats] = useState({
+    totalPatients: 0,
+    todaysInjections: 0,
+    overdueAppointments: 0,
+    pendingApprovals: 0,
+  });
+
+  useEffect(() => {
+    loadStats();
+  }, []);
+
+  async function loadStats() {
+    const today = new Date().toISOString().split("T")[0];
+
+    const { count: totalPatients } = await supabase
+      .from("patients")
+      .select("*", { count: "exact", head: true });
+
+    const { count: todaysInjections } = await supabase
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .eq("appointment_date", today)
+      .eq("status", "scheduled");
+
+    const { count: overdueAppointments } = await supabase
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .lt("appointment_date", today)
+      .eq("status", "scheduled");
+
+    const { count: pendingApprovals } = await supabase
+      .from("dose_changes")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "pending");
+
+    setStats({
+      totalPatients: totalPatients || 0,
+      todaysInjections: todaysInjections || 0,
+      overdueAppointments: overdueAppointments || 0,
+      pendingApprovals: pendingApprovals || 0,
+    });
+  }
 
   async function findPatient() {
     if (!search) {
@@ -43,6 +86,14 @@ export default function DoseTrackDashboard() {
     boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
   };
 
+  const dashboardCards = [
+    ["Patients", `${stats.totalPatients} active patients`],
+    ["Today’s Injections", `${stats.todaysInjections} scheduled today`],
+    ["Missed Appointments", `${stats.overdueAppointments} overdue`],
+    ["Pen/Vial Tracker", "Track dose 1–6 per pen"],
+    ["Doctor Approvals", `${stats.pendingApprovals} pending approvals`],
+  ];
+
   return (
     <main
       style={{
@@ -62,9 +113,7 @@ export default function DoseTrackDashboard() {
         }}
       >
         <h1 style={{ margin: 0, fontSize: 34 }}>DoseTrack Calendar</h1>
-        <p style={{ fontSize: 16 }}>
-          Multi-site weekly injection scheduling and GLP-1 dose tracker.
-        </p>
+        <p>Multi-site weekly injection scheduling and GLP-1 dose tracker.</p>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <Link href="/dosetrack/add-patient">
@@ -118,6 +167,7 @@ export default function DoseTrackDashboard() {
               <strong>
                 {patient.first_name} {patient.surname}
               </strong>
+
               <p>ID / Passport: {patient.id_number}</p>
               <p>Mobile: {patient.mobile_number}</p>
               <p>Doctor: {patient.doctor}</p>
@@ -152,13 +202,7 @@ export default function DoseTrackDashboard() {
             gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
           }}
         >
-          {[
-            ["Patient ID", "Track clinic ID, SA ID or passport."],
-            ["Today’s Injections", "View weekly injections."],
-            ["Patients", "Find early, late or unscheduled patients."],
-            ["Pen/Vial Tracker", "Track dose 1–6 per pen."],
-            ["Doctor Approvals", "Flag dose changes requiring approval."],
-          ].map(([title, text]) => (
+          {dashboardCards.map(([title, text]) => (
             <div key={title} style={cardStyle}>
               <h3>{title}</h3>
               <p>{text}</p>
