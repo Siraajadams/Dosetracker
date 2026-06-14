@@ -11,7 +11,7 @@ export default function DoseTrackDashboard() {
 
   async function findPatient() {
     if (!search) {
-      alert("Enter patient name, surname, ID number, mobile number or clinic ID.");
+      alert("Enter name, ID, mobile or clinic ID.");
       return;
     }
 
@@ -35,56 +35,89 @@ export default function DoseTrackDashboard() {
     setLoading(false);
   }
 
+  const cardStyle = {
+    background: "#ffffff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: 20,
+    boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+  };
+
   return (
-    <main style={{ padding: 24 }}>
-      <h1>DoseTrack Calendar</h1>
-
-      <p>Multi-site weekly injection scheduling and dose tracker.</p>
-
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 20 }}>
-        <Link href="/dosetrack/add-patient">
-          <button style={{ padding: 12 }}>Add New Patient</button>
-        </Link>
-
-        <Link href="/dosetrack/calendar">
-          <button style={{ padding: 12 }}>Injection Calendar</button>
-        </Link>
-      </div>
-
-      <section style={{ marginTop: 30, maxWidth: 800 }}>
-        <h2>Find Existing Patient</h2>
-
-        <p>
-          Use this when a patient arrives early, late or without checking the calendar.
+    <main
+      style={{
+        minHeight: "100vh",
+        padding: 24,
+        background: "linear-gradient(135deg, #eef7ff, #f8fafc)",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
+      <section
+        style={{
+          background: "linear-gradient(135deg, #0f766e, #2563eb)",
+          color: "white",
+          padding: 28,
+          borderRadius: 18,
+          marginBottom: 28,
+        }}
+      >
+        <h1 style={{ margin: 0, fontSize: 34 }}>DoseTrack Calendar</h1>
+        <p style={{ fontSize: 16 }}>
+          Multi-site weekly injection scheduling and GLP-1 dose tracker.
         </p>
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <Link href="/dosetrack/add-patient">
+            <button style={{ padding: 12, borderRadius: 10, border: "none" }}>
+              Add New Patient
+            </button>
+          </Link>
+
+          <Link href="/dosetrack/calendar">
+            <button style={{ padding: 12, borderRadius: 10, border: "none" }}>
+              Injection Calendar
+            </button>
+          </Link>
+        </div>
+      </section>
+
+      <section style={cardStyle}>
+        <h2>Find Existing Patient</h2>
+        <p>Use this when a patient arrives early, late or without checking the calendar.</p>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input
             placeholder="Search name, ID, mobile or clinic ID"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ padding: 12, minWidth: 320 }}
+            style={{
+              padding: 14,
+              minWidth: 320,
+              borderRadius: 10,
+              border: "1px solid #cbd5e1",
+            }}
           />
 
-          <button onClick={findPatient} style={{ padding: 12 }}>
+          <button
+            onClick={findPatient}
+            style={{
+              padding: 14,
+              borderRadius: 10,
+              border: "none",
+              background: "#2563eb",
+              color: "white",
+            }}
+          >
             {loading ? "Searching..." : "Search"}
           </button>
         </div>
 
         <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
           {patients.map((patient) => (
-            <div
-              key={patient.id}
-              style={{
-                border: "1px solid #ddd",
-                padding: 16,
-                borderRadius: 6,
-              }}
-            >
+            <div key={patient.id} style={cardStyle}>
               <strong>
                 {patient.first_name} {patient.surname}
               </strong>
-
               <p>ID / Passport: {patient.id_number}</p>
               <p>Mobile: {patient.mobile_number}</p>
               <p>Doctor: {patient.doctor}</p>
@@ -92,7 +125,15 @@ export default function DoseTrackDashboard() {
               <p>Dose: {patient.current_dose}</p>
 
               <Link href={`/dosetrack/patient/${patient.id}`}>
-                <button style={{ padding: 10 }}>
+                <button
+                  style={{
+                    padding: 10,
+                    borderRadius: 8,
+                    border: "none",
+                    background: "#0f766e",
+                    color: "white",
+                  }}
+                >
                   Open Patient Profile
                 </button>
               </Link>
@@ -101,34 +142,28 @@ export default function DoseTrackDashboard() {
         </div>
       </section>
 
-      <section style={{ marginTop: 30 }}>
+      <section style={{ marginTop: 28 }}>
         <h2>Dashboard</h2>
 
-        <div style={{ display: "grid", gap: 12, maxWidth: 500 }}>
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Patient ID / ID Number</strong>
-            <p>Track clinic patient ID, SA ID number, or passport number.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Today&apos;s Injections</strong>
-            <p>View scheduled weekly injections.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Patients</strong>
-            <p>Find patients who arrive early, late or unscheduled.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Pen/Vial Tracker</strong>
-            <p>Track dose 1–6 for each assigned pen or vial.</p>
-          </div>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <strong>Doctor Approvals</strong>
-            <p>Flag dose increases requiring approval.</p>
-          </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 16,
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          }}
+        >
+          {[
+            ["Patient ID", "Track clinic ID, SA ID or passport."],
+            ["Today’s Injections", "View weekly injections."],
+            ["Patients", "Find early, late or unscheduled patients."],
+            ["Pen/Vial Tracker", "Track dose 1–6 per pen."],
+            ["Doctor Approvals", "Flag dose changes requiring approval."],
+          ].map(([title, text]) => (
+            <div key={title} style={cardStyle}>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </div>
+          ))}
         </div>
       </section>
     </main>
