@@ -2,9 +2,75 @@ import Link from "next/link";
 
 export default function HomePage() {
   return (
-    <main style={{ padding: 24 }}>
-      <h1>DoseTracker</h1>
-      <Link href="/dosetrack">Open DoseTracker Calendar</Link>
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg, #e0f2fe, #f8fafc)",
+        fontFamily: "Arial, sans-serif",
+        padding: 24,
+      }}
+    >
+      <section
+        style={{
+          maxWidth: 1100,
+          margin: "0 auto",
+          padding: 40,
+          borderRadius: 24,
+          background: "linear-gradient(135deg, #0f766e, #2563eb)",
+          color: "white",
+        }}
+      >
+        <h1 style={{ fontSize: 46, marginBottom: 10 }}>DoseTrack</h1>
+        <p style={{ fontSize: 20 }}>
+          Medical injection scheduling, GLP-1 dose tracking and clinic reporting.
+        </p>
+
+        <div style={{ marginTop: 30 }}>
+          <Link href="/login">
+            <button
+              style={{
+                padding: "14px 24px",
+                borderRadius: 12,
+                border: "none",
+                fontWeight: "bold",
+                cursor: "pointer",
+              }}
+            >
+              Staff Login
+            </button>
+          </Link>
+        </div>
+      </section>
+
+      <section
+        style={{
+          maxWidth: 1100,
+          margin: "30px auto",
+          display: "grid",
+          gap: 18,
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        }}
+      >
+        {[
+          ["Reception Calendar", "Manage daily, weekly and monthly injection appointments."],
+          ["Patient Profiles", "Track dose, pen number, weight, BMI and next appointment."],
+          ["Clinic Reports", "Monthly reports by doctor, site, dose and weight loss."],
+          ["Secure Access", "Receptionist and administrator login before patient access."],
+        ].map(([title, text]) => (
+          <div
+            key={title}
+            style={{
+              background: "white",
+              padding: 24,
+              borderRadius: 18,
+              boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+            }}
+          >
+            <h3>{title}</h3>
+            <p>{text}</p>
+          </div>
+        ))}
+      </section>
     </main>
   );
 }
