@@ -30,9 +30,7 @@ const slots = Array.from({ length: 37 }, (_, i) => {
 
 export default function InjectionCalendarPage() {
   const [view, setView] = useState("day");
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [site, setSite] = useState("");
   const [doctor, setDoctor] = useState("");
   const [appointments, setAppointments] = useState<any[]>([]);
@@ -50,6 +48,7 @@ export default function InjectionCalendarPage() {
     if (view === "week") {
       const day = date.getDay();
       start.setDate(date.getDate() - day);
+      end = new Date(start);
       end.setDate(start.getDate() + 6);
     }
 
@@ -64,6 +63,20 @@ export default function InjectionCalendarPage() {
     };
   }
 
+  function getDates() {
+    const range = getRange();
+    const dates: string[] = [];
+    const start = new Date(range.start);
+    const end = new Date(range.end);
+
+    while (start <= end) {
+      dates.push(start.toISOString().split("T")[0]);
+      start.setDate(start.getDate() + 1);
+    }
+
+    return dates;
+  }
+
   async function loadAppointments() {
     setLoading(true);
 
@@ -71,8 +84,7 @@ export default function InjectionCalendarPage() {
 
     let query = supabase
       .from("appointments")
-      .select(
-        `
+      .select(`
         *,
         patients (
           id,
@@ -83,8 +95,7 @@ export default function InjectionCalendarPage() {
           medication,
           patient_clinic_id
         )
-      `
-      )
+      `)
       .gte("appointment_date", range.start)
       .lte("appointment_date", range.end)
       .order("appointment_date")
@@ -96,7 +107,7 @@ export default function InjectionCalendarPage() {
     const { data, error } = await query;
 
     if (error) {
-      alert(error.message);
+      alert("Calendar load failed: " + error.message);
       setLoading(false);
       return;
     }
@@ -112,11 +123,69 @@ export default function InjectionCalendarPage() {
       .eq("id", appointment.id);
 
     if (error) {
-      alert(error.message);
+      alert("Could not complete appointment: " + error.message);
       return;
     }
 
     alert("Appointment marked as completed.");
+    loadAppointments();
+  }
+
+  async function cancelAppointment(appointment: any) {
+    const reason = prompt("Reason for cancellation?", "Patient cancelled");
+
+    if (!reason) return;
+
+    const { error } = await supabase
+      .from("appointments")
+      .update({
+        status: "cancelled",
+        cancellation_reason: reason,
+      })
+      .eq("id", appointment.id);
+
+    if (error) {
+      alert("Could not cancel appointment: " + error.message);
+      return;
+    }
+
+    alert("Appointment cancelled.");
+    loadAppointments();
+  }
+
+  async function rescheduleAppointment(appointment: any) {
+    const newDate = prompt(
+      "Enter new appointment date in YYYY-MM-DD format:",
+      appointment.appointment_date
+    );
+
+    if (!newDate) return;
+
+    const newTime = prompt(
+      "Enter new appointment time, example 14:00:",
+      String(appointment.appointment_time).slice(0, 5)
+    );
+
+    if (!newTime) return;
+
+    const { error } = await supabase
+      .from("appointments")
+      .update({
+        appointment_date: newDate,
+        appointment_time: newTime,
+        rescheduled_from_date: appointment.appointment_date,
+        rescheduled_from_time: String(appointment.appointment_time).slice(0, 5),
+        status: "scheduled",
+      })
+      .eq("id", appointment.id);
+
+    if (error) {
+      alert("Could not reschedule appointment: " + error.message);
+      return;
+    }
+
+    alert("Appointment rescheduled.");
+    setSelectedDate(newDate);
     loadAppointments();
   }
 
@@ -125,120 +194,75 @@ export default function InjectionCalendarPage() {
       (a) =>
         a.appointment_date === date &&
         String(a.appointment_time).slice(0, 5) === time &&
-        a.status !== "completed"
+        a.status !== "completed" &&
+        a.status !== "cancelled"
     );
-  }
-
-  function getDates() {
-    const range = getRange();
-    const dates = [];
-    const start = new Date(range.start);
-    const end = new Date(range.end);
-
-    while (start <= end) {
-      dates.push(start.toISOString().split("T")[0]);
-      start.setDate(start.getDate() + 1);
-    }
-
-    return dates;
   }
 
   const dates = getDates();
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        padding: 24,
-        background: "linear-gradient(135deg, #eef7ff, #f8fafc)",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
+    <main style={pageStyle}>
       <Link href="/dosetrack">
-        <button style={{ padding: 10, borderRadius: 8, marginBottom: 20 }}>
-          ← Back to Dashboard
-        </button>
+        <button style={backButton}>← Back to Dashboard</button>
       </Link>
 
-      <section
-        style={{
-          background: "linear-gradient(135deg, #0f766e, #2563eb)",
-          color: "white",
-          padding: 26,
-          borderRadius: 18,
-          marginBottom: 20,
-        }}
-      >
+      <section style={heroStyle}>
         <h1 style={{ margin: 0 }}>Injection Calendar</h1>
         <p>
-          Reception calendar for weekly GLP-1 injections. Each slot is 15
-          minutes from 09:00 to 18:00.
+          Manage weekly GLP-1 injection appointments, cancellations and rescheduling.
         </p>
       </section>
 
-      <section
-        style={{
-          background: "white",
-          padding: 18,
-          borderRadius: 14,
-          marginBottom: 20,
-          boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
-        }}
-      >
-        <h3>Next steps for reception</h3>
+      <section style={cardStyle}>
+        <h3>Reception workflow</h3>
         <p>
-          1. Select the day, week or month. 2. Filter by site or doctor. 3. Open
-          the patient profile or mark the appointment completed after the dose is
-          given.
+          Select view and date. Open the patient profile when the patient arrives.
+          Mark completed after dose is given, or cancel/reschedule if the patient changes time.
         </p>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select value={view} onChange={(e) => setView(e.target.value)}>
+          <select style={inputStyle} value={view} onChange={(e) => setView(e.target.value)}>
             <option value="day">Day View</option>
             <option value="week">Week View</option>
             <option value="month">Month View</option>
           </select>
 
           <input
+            style={inputStyle}
             type="date"
             value={selectedDate}
             onChange={(e) => setSelectedDate(e.target.value)}
           />
 
-          <select value={site} onChange={(e) => setSite(e.target.value)}>
+          <select style={inputStyle} value={site} onChange={(e) => setSite(e.target.value)}>
             <option value="">All Sites</option>
             {sites.map((s) => (
               <option key={s}>{s}</option>
             ))}
           </select>
 
-          <select value={doctor} onChange={(e) => setDoctor(e.target.value)}>
+          <select style={inputStyle} value={doctor} onChange={(e) => setDoctor(e.target.value)}>
             <option value="">All Doctors</option>
             {doctors.map((d) => (
               <option key={d}>{d}</option>
             ))}
           </select>
 
-          <button onClick={loadAppointments}>Refresh</button>
+          <button style={primaryButton} onClick={loadAppointments}>
+            Refresh
+          </button>
         </div>
       </section>
 
       {loading && <p>Loading calendar...</p>}
 
-      <section
-        style={{
-          overflowX: "auto",
-          background: "white",
-          borderRadius: 14,
-          padding: 16,
-          boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
-        }}
-      >
+      <section style={calendarCard}>
         <table
           style={{
             width: "100%",
             borderCollapse: "collapse",
-            minWidth: view === "day" ? 700 : 1100,
+            minWidth: view === "day" ? 760 : 1200,
           }}
         >
           <thead>
@@ -265,50 +289,52 @@ export default function InjectionCalendarPage() {
                   return (
                     <td key={`${date}-${time}`} style={tdStyle}>
                       {appointment ? (
-                        <div
-                          style={{
-                            padding: 10,
-                            borderRadius: 10,
-                            background: "#e0f2fe",
-                            borderLeft: "5px solid #2563eb",
-                          }}
-                        >
+                        <div style={appointmentCard}>
                           <strong>
                             {appointment.patients?.first_name}{" "}
                             {appointment.patients?.surname}
                           </strong>
 
                           <p style={{ margin: "6px 0" }}>
-                            {appointment.patients?.current_dose} |{" "}
-                            {appointment.site}
+                            Dose: {appointment.patients?.current_dose}
                           </p>
 
                           <p style={{ margin: "6px 0" }}>
-                            {appointment.doctor}
+                            Site: {appointment.site || "Not set"}
                           </p>
 
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: 6,
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            <Link
-                              href={`/dosetrack/patient/${appointment.patient_id}`}
-                            >
+                          <p style={{ margin: "6px 0" }}>
+                            Doctor: {appointment.doctor || "Not set"}
+                          </p>
+
+                          <p style={{ margin: "6px 0" }}>
+                            Status: {appointment.status}
+                          </p>
+
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <Link href={`/dosetrack/patient/${appointment.patient_id}`}>
                               <button style={smallButton}>Open</button>
                             </Link>
 
                             <button
                               onClick={() => markCompleted(appointment)}
-                              style={{
-                                ...smallButton,
-                                background: "#16a34a",
-                                color: "white",
-                              }}
+                              style={{ ...smallButton, background: "#16a34a" }}
                             >
-                              Mark Completed
+                              Complete
+                            </button>
+
+                            <button
+                              onClick={() => rescheduleAppointment(appointment)}
+                              style={{ ...smallButton, background: "#f59e0b" }}
+                            >
+                              Reschedule
+                            </button>
+
+                            <button
+                              onClick={() => cancelAppointment(appointment)}
+                              style={{ ...smallButton, background: "#dc2626" }}
+                            >
+                              Cancel
                             </button>
                           </div>
                         </div>
@@ -327,6 +353,60 @@ export default function InjectionCalendarPage() {
   );
 }
 
+const pageStyle = {
+  minHeight: "100vh",
+  padding: 24,
+  background: "linear-gradient(135deg, #eef7ff, #f8fafc)",
+  fontFamily: "Arial, sans-serif",
+};
+
+const heroStyle = {
+  background: "linear-gradient(135deg, #0f766e, #2563eb)",
+  color: "white",
+  padding: 26,
+  borderRadius: 18,
+  marginBottom: 20,
+};
+
+const cardStyle = {
+  background: "white",
+  padding: 18,
+  borderRadius: 14,
+  marginBottom: 20,
+  boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+};
+
+const calendarCard = {
+  overflowX: "auto" as const,
+  background: "white",
+  borderRadius: 14,
+  padding: 16,
+  boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+};
+
+const inputStyle = {
+  padding: 10,
+  borderRadius: 8,
+  border: "1px solid #cbd5e1",
+};
+
+const backButton = {
+  padding: 10,
+  borderRadius: 8,
+  marginBottom: 20,
+  border: "1px solid #cbd5e1",
+  background: "white",
+};
+
+const primaryButton = {
+  padding: "10px 14px",
+  borderRadius: 8,
+  border: "none",
+  background: "#2563eb",
+  color: "white",
+  cursor: "pointer",
+};
+
 const thStyle = {
   border: "1px solid #e5e7eb",
   padding: 12,
@@ -338,6 +418,13 @@ const tdStyle = {
   border: "1px solid #e5e7eb",
   padding: 10,
   verticalAlign: "top" as const,
+};
+
+const appointmentCard = {
+  padding: 10,
+  borderRadius: 10,
+  background: "#e0f2fe",
+  borderLeft: "5px solid #2563eb",
 };
 
 const smallButton = {
