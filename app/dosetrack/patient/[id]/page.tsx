@@ -7,7 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 
 type Patient = {
   id: string;
-  patient_id: string | null;
   first_name: string;
   surname: string;
   id_number: string | null;
@@ -62,13 +61,13 @@ export default function PatientProfilePage() {
     }
 
     setLoading(true);
+    setMessage("");
     setErrorMessage("");
 
     const { data, error } = await supabase
       .from("patients")
       .select(`
         id,
-        patient_id,
         first_name,
         surname,
         id_number,
@@ -92,6 +91,7 @@ export default function PatientProfilePage() {
 
     if (error) {
       console.error("Patient load error:", error);
+
       setPatient(null);
       setErrorMessage(error.message);
       setLoading(false);
@@ -121,22 +121,24 @@ export default function PatientProfilePage() {
   function calculateAge(dob?: string | null) {
     if (!dob) return null;
 
-    const birth = new Date(dob);
+    const birthDate = new Date(dob);
 
-    if (Number.isNaN(birth.getTime())) {
+    if (Number.isNaN(birthDate.getTime())) {
       return null;
     }
 
     const today = new Date();
 
-    let age = today.getFullYear() - birth.getFullYear();
+    let age =
+      today.getFullYear() - birthDate.getFullYear();
 
-    const monthDifference = today.getMonth() - birth.getMonth();
+    const monthDifference =
+      today.getMonth() - birthDate.getMonth();
 
     if (
       monthDifference < 0 ||
       (monthDifference === 0 &&
-        today.getDate() < birth.getDate())
+        today.getDate() < birthDate.getDate())
     ) {
       age--;
     }
@@ -155,10 +157,13 @@ export default function PatientProfilePage() {
       return 0;
     }
 
-    const heightM = validHeightCm / 100;
+    const heightMetres = validHeightCm / 100;
 
     return Number(
-      (validWeight / Math.pow(heightM, 2)).toFixed(1)
+      (
+        validWeight /
+        Math.pow(heightMetres, 2)
+      ).toFixed(1)
     );
   }
 
@@ -169,8 +174,14 @@ export default function PatientProfilePage() {
 
     if (Number.isNaN(baseDate.getTime())) {
       const fallbackDate = new Date();
-      fallbackDate.setDate(fallbackDate.getDate() + 7);
-      return fallbackDate.toISOString().split("T")[0];
+
+      fallbackDate.setDate(
+        fallbackDate.getDate() + 7
+      );
+
+      return fallbackDate
+        .toISOString()
+        .split("T")[0];
     }
 
     baseDate.setDate(baseDate.getDate() + 7);
@@ -219,10 +230,14 @@ export default function PatientProfilePage() {
       );
 
       const startingWeight =
-        Number(patient.starting_weight || 0) || weight;
+        Number(patient.starting_weight || 0) ||
+        weight;
 
       const weightLost = Number(
-        Math.max(0, startingWeight - weight).toFixed(1)
+        Math.max(
+          0,
+          startingWeight - weight
+        ).toFixed(1)
       );
 
       const bmi = calculateBMI(
@@ -230,38 +245,40 @@ export default function PatientProfilePage() {
         patient.height_cm
       );
 
-      const { error: injectionError } = await supabase
-        .from("injections")
-        .insert({
-          patient_id: patient.id,
-          injection_date: new Date()
-            .toISOString()
-            .split("T")[0],
-          weight,
-          dose: patient.current_dose,
-          pen_number: currentPenNumber,
-          dose_number: currentDoseNumber,
-          notes: notes.trim() || null,
-        });
+      const { error: injectionError } =
+        await supabase
+          .from("injections")
+          .insert({
+            patient_id: patient.id,
+            injection_date: new Date()
+              .toISOString()
+              .split("T")[0],
+            weight,
+            dose: patient.current_dose,
+            pen_number: currentPenNumber,
+            dose_number: currentDoseNumber,
+            notes: notes.trim() || null,
+          });
 
       if (injectionError) {
         throw injectionError;
       }
 
-      const { error: updateError } = await supabase
-        .from("patients")
-        .update({
-          current_weight: weight,
-          weight_lost: weightLost,
-          bmi,
-          dose_number: nextDoseNumber,
-          pen_number: nextPenNumber,
-          next_appointment: nextAppointment,
-        })
-        .eq("id", patient.id);
+      const { error: patientUpdateError } =
+        await supabase
+          .from("patients")
+          .update({
+            current_weight: weight,
+            weight_lost: weightLost,
+            bmi,
+            dose_number: nextDoseNumber,
+            pen_number: nextPenNumber,
+            next_appointment: nextAppointment,
+          })
+          .eq("id", patient.id);
 
-      if (updateError) {
-        throw updateError;
+      if (patientUpdateError) {
+        throw patientUpdateError;
       }
 
       setMessage(
@@ -272,12 +289,16 @@ export default function PatientProfilePage() {
 
       await loadPatient();
     } catch (error) {
+      console.error(
+        "Injection update error:",
+        error
+      );
+
       const updateMessage =
         error instanceof Error
           ? error.message
           : "Unable to record the injection.";
 
-      console.error("Injection update error:", error);
       setErrorMessage(updateMessage);
     } finally {
       setSavingInjection(false);
@@ -285,7 +306,9 @@ export default function PatientProfilePage() {
   }
 
   async function confirmDoseChange() {
-    if (!patient || !newDose || savingDose) return;
+    if (!patient || !newDose || savingDose) {
+      return;
+    }
 
     setMessage("");
     setErrorMessage("");
@@ -300,41 +323,45 @@ export default function PatientProfilePage() {
     setSavingDose(true);
 
     try {
-      const { error: doseLogError } = await supabase
-        .from("dose_changes")
-        .insert({
-          patient_id: patient.id,
-          old_dose: patient.current_dose,
-          new_dose: newDose,
-          status: "approved",
-          notes: "Dose changed from patient profile",
-        });
+      const { error: doseLogError } =
+        await supabase
+          .from("dose_changes")
+          .insert({
+            patient_id: patient.id,
+            old_dose: patient.current_dose,
+            new_dose: newDose,
+            status: "approved",
+            notes:
+              "Dose changed from patient profile",
+          });
 
       if (doseLogError) {
         throw doseLogError;
       }
 
-      const { error: updateError } = await supabase
-        .from("patients")
-        .update({
-          current_dose: newDose,
-        })
-        .eq("id", patient.id);
+      const { error: patientUpdateError } =
+        await supabase
+          .from("patients")
+          .update({
+            current_dose: newDose,
+          })
+          .eq("id", patient.id);
 
-      if (updateError) {
-        throw updateError;
+      if (patientUpdateError) {
+        throw patientUpdateError;
       }
 
       setMessage("Dose updated successfully.");
 
       await loadPatient();
     } catch (error) {
+      console.error("Dose update error:", error);
+
       const updateMessage =
         error instanceof Error
           ? error.message
           : "Unable to update the dose.";
 
-      console.error("Dose update error:", error);
       setErrorMessage(updateMessage);
     } finally {
       setSavingDose(false);
@@ -343,7 +370,12 @@ export default function PatientProfilePage() {
 
   if (loading) {
     return (
-      <main style={{ padding: 30 }}>
+      <main
+        style={{
+          padding: 30,
+          fontFamily: "Arial, sans-serif",
+        }}
+      >
         Loading patient...
       </main>
     );
@@ -351,7 +383,12 @@ export default function PatientProfilePage() {
 
   if (!patient) {
     return (
-      <main style={{ padding: 30 }}>
+      <main
+        style={{
+          padding: 30,
+          fontFamily: "Arial, sans-serif",
+        }}
+      >
         <p>Patient not found.</p>
 
         {errorMessage && (
@@ -368,27 +405,28 @@ export default function PatientProfilePage() {
   }
 
   const currentWeightValue = Number(
-    patient.current_weight ||
-      patient.starting_weight ||
+    patient.current_weight ??
+      patient.starting_weight ??
       0
   );
 
   const startingWeightValue = Number(
-    patient.starting_weight || 0
+    patient.starting_weight ?? 0
   );
 
-  const bmi = calculateBMI(
+  const calculatedBmi = calculateBMI(
     currentWeightValue,
     patient.height_cm
   );
 
-  const weightLost =
+  const calculatedWeightLost =
     startingWeightValue > 0 &&
     currentWeightValue > 0
       ? Number(
           Math.max(
             0,
-            startingWeightValue - currentWeightValue
+            startingWeightValue -
+              currentWeightValue
           ).toFixed(1)
         )
       : 0;
@@ -429,9 +467,10 @@ export default function PatientProfilePage() {
         </h1>
 
         <p style={{ marginBottom: 0 }}>
-          {patient.current_dose || "Dose not set"} | Pen{" "}
-          {patient.pen_number || 1} | Dose{" "}
-          {patient.dose_number || 1} of 6
+          {patient.current_dose ||
+            "Dose not set"}{" "}
+          | Pen {patient.pen_number || 1} |
+          Dose {patient.dose_number || 1} of 6
         </p>
       </div>
 
@@ -474,7 +513,7 @@ export default function PatientProfilePage() {
       >
         <Info
           title="Patient Clinic ID"
-          value={patient.patient_id}
+          value={patient.id}
         />
 
         <Info
@@ -531,12 +570,16 @@ export default function PatientProfilePage() {
 
         <Info
           title="Weight Lost"
-          value={`${weightLost} kg`}
+          value={`${calculatedWeightLost} kg`}
         />
 
         <Info
           title="BMI"
-          value={bmi > 0 ? bmi.toFixed(1) : "-"}
+          value={
+            calculatedBmi > 0
+              ? calculatedBmi.toFixed(1)
+              : "-"
+          }
         />
 
         <Info
@@ -575,10 +618,10 @@ export default function PatientProfilePage() {
           <h2>Record Today’s Injection</h2>
 
           <p>
-            Use this after the patient receives their
-            weekly injection. This updates weight, BMI,
-            weight loss, dose number, pen usage and the
-            next appointment.
+            Use this after the patient receives
+            their weekly injection. This updates
+            weight, BMI, weight loss, dose number,
+            pen usage and the next appointment.
           </p>
 
           <label htmlFor="current-weight">
@@ -592,7 +635,9 @@ export default function PatientProfilePage() {
             step="0.1"
             value={currentWeight}
             onChange={(event) =>
-              setCurrentWeight(event.target.value)
+              setCurrentWeight(
+                event.target.value
+              )
             }
             style={input}
             placeholder="Enter current weight"
@@ -622,7 +667,9 @@ export default function PatientProfilePage() {
             disabled={savingInjection}
             style={{
               ...greenButton,
-              opacity: savingInjection ? 0.65 : 1,
+              opacity: savingInjection
+                ? 0.65
+                : 1,
             }}
           >
             {savingInjection
@@ -635,9 +682,10 @@ export default function PatientProfilePage() {
           <h2>Change Dose</h2>
 
           <p>
-            Use this only when the doctor changes the
-            patient’s prescribed dose. The change is
-            logged for audit and monthly reporting.
+            Use this only when the doctor changes
+            the patient’s prescribed dose. The
+            change is logged for audit and monthly
+            reporting.
           </p>
 
           <label htmlFor="new-dose">
@@ -670,7 +718,9 @@ export default function PatientProfilePage() {
             style={{
               ...blueButton,
               opacity:
-                savingDose || !newDose ? 0.65 : 1,
+                savingDose || !newDose
+                  ? 0.65
+                  : 1,
             }}
           >
             {savingDose
@@ -688,7 +738,11 @@ function Info({
   value,
 }: {
   title: string;
-  value: string | number | null | undefined;
+  value:
+    | string
+    | number
+    | null
+    | undefined;
 }) {
   const displayValue =
     value === null ||
@@ -716,7 +770,12 @@ function Info({
         {title}
       </h3>
 
-      <p style={{ margin: 0 }}>
+      <p
+        style={{
+          margin: 0,
+          overflowWrap: "anywhere",
+        }}
+      >
         {displayValue}
       </p>
     </div>
@@ -727,7 +786,8 @@ const card: React.CSSProperties = {
   background: "white",
   padding: 24,
   borderRadius: 18,
-  boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+  boxShadow:
+    "0 4px 16px rgba(0,0,0,0.08)",
 };
 
 const input: React.CSSProperties = {
