@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 
 type Patient = {
   id: string;
-  clinic_id: string | null;
+  patient_id: string | null;
   first_name: string;
   surname: string;
   id_number: string | null;
