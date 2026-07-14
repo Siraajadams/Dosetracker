@@ -68,7 +68,7 @@ export default function PatientProfilePage() {
       .from("patients")
       .select(`
         id,
-        clinic_id,
+        patient_id,
         first_name,
         surname,
         id_number,
@@ -135,7 +135,8 @@ export default function PatientProfilePage() {
 
     if (
       monthDifference < 0 ||
-      (monthDifference === 0 && today.getDate() < birth.getDate())
+      (monthDifference === 0 &&
+        today.getDate() < birth.getDate())
     ) {
       age--;
     }
@@ -195,8 +196,13 @@ export default function PatientProfilePage() {
     setSavingInjection(true);
 
     try {
-      const currentDoseNumber = Number(patient.dose_number || 1);
-      const currentPenNumber = Number(patient.pen_number || 1);
+      const currentDoseNumber = Number(
+        patient.dose_number || 1
+      );
+
+      const currentPenNumber = Number(
+        patient.pen_number || 1
+      );
 
       const nextDoseNumber =
         currentDoseNumber >= 6
@@ -219,7 +225,10 @@ export default function PatientProfilePage() {
         Math.max(0, startingWeight - weight).toFixed(1)
       );
 
-      const bmi = calculateBMI(weight, patient.height_cm);
+      const bmi = calculateBMI(
+        weight,
+        patient.height_cm
+      );
 
       const { error: injectionError } = await supabase
         .from("injections")
@@ -258,17 +267,18 @@ export default function PatientProfilePage() {
       setMessage(
         "Injection and weight updated successfully."
       );
+
       setNotes("");
 
       await loadPatient();
     } catch (error) {
-      const message =
+      const updateMessage =
         error instanceof Error
           ? error.message
           : "Unable to record the injection.";
 
       console.error("Injection update error:", error);
-      setErrorMessage(message);
+      setErrorMessage(updateMessage);
     } finally {
       setSavingInjection(false);
     }
@@ -319,13 +329,13 @@ export default function PatientProfilePage() {
 
       await loadPatient();
     } catch (error) {
-      const message =
+      const updateMessage =
         error instanceof Error
           ? error.message
           : "Unable to update the dose.";
 
       console.error("Dose update error:", error);
-      setErrorMessage(message);
+      setErrorMessage(updateMessage);
     } finally {
       setSavingDose(false);
     }
@@ -464,7 +474,7 @@ export default function PatientProfilePage() {
       >
         <Info
           title="Patient Clinic ID"
-          value={patient.clinic_id}
+          value={patient.patient_id}
         />
 
         <Info
