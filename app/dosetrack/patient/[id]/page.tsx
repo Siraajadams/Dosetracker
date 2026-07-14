@@ -22,7 +22,6 @@ type Patient = {
   current_dose: string | null;
   pen_number: number | null;
   dose_number: number | null;
-  next_appointment: string | null;
   status: string | null;
 };
 
@@ -61,7 +60,6 @@ export default function PatientProfilePage() {
     }
 
     setLoading(true);
-    setMessage("");
     setErrorMessage("");
 
     const { data, error } = await supabase
@@ -83,7 +81,6 @@ export default function PatientProfilePage() {
         current_dose,
         pen_number,
         dose_number,
-        next_appointment,
         status
       `)
       .eq("id", patientId)
@@ -167,28 +164,6 @@ export default function PatientProfilePage() {
     );
   }
 
-  function addSevenDays(dateString?: string | null) {
-    const baseDate = dateString
-      ? new Date(dateString)
-      : new Date();
-
-    if (Number.isNaN(baseDate.getTime())) {
-      const fallbackDate = new Date();
-
-      fallbackDate.setDate(
-        fallbackDate.getDate() + 7
-      );
-
-      return fallbackDate
-        .toISOString()
-        .split("T")[0];
-    }
-
-    baseDate.setDate(baseDate.getDate() + 7);
-
-    return baseDate.toISOString().split("T")[0];
-  }
-
   async function recordInjection() {
     if (!patient || savingInjection) return;
 
@@ -224,10 +199,6 @@ export default function PatientProfilePage() {
         currentDoseNumber >= 6
           ? currentPenNumber + 1
           : currentPenNumber;
-
-      const nextAppointment = addSevenDays(
-        patient.next_appointment
-      );
 
       const startingWeight =
         Number(patient.starting_weight || 0) ||
@@ -273,7 +244,6 @@ export default function PatientProfilePage() {
             bmi,
             dose_number: nextDoseNumber,
             pen_number: nextPenNumber,
-            next_appointment: nextAppointment,
           })
           .eq("id", patient.id);
 
@@ -584,7 +554,7 @@ export default function PatientProfilePage() {
 
         <Info
           title="Next Appointment"
-          value={patient.next_appointment}
+          value="-"
         />
 
         <Info
@@ -620,8 +590,8 @@ export default function PatientProfilePage() {
           <p>
             Use this after the patient receives
             their weekly injection. This updates
-            weight, BMI, weight loss, dose number,
-            pen usage and the next appointment.
+            weight, BMI, weight loss, dose number
+            and pen usage.
           </p>
 
           <label htmlFor="current-weight">
