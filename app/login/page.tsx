@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -10,35 +11,110 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
 
-  async function login() {
-    if (!email || !password) {
-      alert("Please enter email and password.");
+  async function login(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setMessage("");
+
+    if (!email.trim() || !password) {
+      setMessage("Please enter your email and password.");
       return;
     }
 
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
-    setLoading(false);
+      if (error) throw error;
+      if (!data.user) {
+        throw new Error("Unable to identify your account.");
+      }
 
-    if (error) {
-      alert(error.message);
-      return;
+      const { data: profile, error: profileError } =
+        await supabase
+          .from("staff_profiles")
+          .select("role, approval_status, is_active")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+      if (profileError) throw profileError;
+
+      if (!profile) {
+        setMessage(
+          "No staff profile found. Contact the administrator."
+        );
+        return;
+      }
+
+      const { role, approval_status, is_active } = profile;
+
+      if (role === "super_admin") {
+        if (
+          approval_status !== "approved" ||
+          is_active !== true
+        ) {
+          setMessage("Super Admin account is not active.");
+          return;
+        }
+
+        router.replace("/admin/staff-approvals");
+        return;
+      }
+
+      if (approval_status === "rejected") {
+        setMessage(
+          "Your registration was not approved. Contact the administrator."
+        );
+        return;
+      }
+
+      if (
+        approval_status !== "approved" ||
+        is_active !== true
+      ) {
+        router.replace("/pending-approval");
+        return;
+      }
+
+      if (role === "nurse") {
+        router.replace("/family-planning");
+        return;
+      }
+
+      if (
+        role === "site_admin" ||
+        role === "receptionist"
+      ) {
+        router.replace("/dosetrack");
+        return;
+      }
+
+      setMessage(
+        "Your account role is not configured for access."
+      );
+    } catch (err: unknown) {
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Login failed. Please try again."
+      );
+    } finally {
+      setLoading(false);
     }
-
-    router.push("/dosetrack");
   }
 
   return (
     <main
       style={{
         minHeight: "100vh",
-        background: "linear-gradient(135deg, #e0f2fe, #f8fafc)",
+        background:
+          "linear-gradient(135deg, #e0f2fe, #f8fafc)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -57,13 +133,23 @@ export default function LoginPage() {
         }}
       >
         <h1>DoseTrack Login</h1>
-        <p>Receptionist / Administrator access</p>
+        <p>Clinical Staff / Administrator Access</p>
 
-        <div style={{ display: "grid", gap: 14, marginTop: 24 }}>
+        <form
+          onSubmit={login}
+          style={{
+            display: "grid",
+            gap: 14,
+            marginTop: 24,
+          }}
+        >
           <input
+            type="email"
             placeholder="Email address"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            required
             style={{
               padding: 14,
               borderRadius: 10,
@@ -76,6 +162,8 @@ export default function LoginPage() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
             style={{
               padding: 14,
               borderRadius: 10,
@@ -83,8 +171,20 @@ export default function LoginPage() {
             }}
           />
 
+          {message && (
+            <p
+              role="alert"
+              style={{
+                color: "#b91c1c",
+                fontSize: 14,
+              }}
+            >
+              {message}
+            </p>
+          )}
+
           <button
-            onClick={login}
+            type="submit"
             disabled={loading}
             style={{
               padding: 14,
@@ -93,12 +193,13 @@ export default function LoginPage() {
               border: "none",
               borderRadius: 10,
               fontWeight: "bold",
-              cursor: "pointer",
+              cursor: loading ? "wait" : "pointer",
+              opacity: loading ? 0.7 : 1,
             }}
           >
             {loading ? "Signing in..." : "Login"}
           </button>
-        </div>
+        </form>
       </section>
     </main>
   );
