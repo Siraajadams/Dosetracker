@@ -48,7 +48,7 @@ export default function PendingApproval() {
       if (!emailConfirmed) {
         setApproved(false);
         setStatus(
-          "Your email address has not been verified. Please check your inbox or resend the verification email."
+          "Your email is not verified. Please check your inbox or resend the verification email."
         );
         return;
       }
@@ -70,7 +70,7 @@ export default function PendingApproval() {
       if (!data) {
         setApproved(false);
         setStatus(
-          "Your staff registration profile was not found. Please contact the administrator."
+          "Staff profile not found. Contact the administrator."
         );
         return;
       }
@@ -84,4 +84,160 @@ export default function PendingApproval() {
 
       if (isApproved) {
         setStatus(
-          "Your account is approved and active. You can now sign in to Dose
+          "Your account is approved and active. You can now sign in to DoseTrack."
+        );
+      } else if (data.approval_status === "rejected") {
+        setStatus(
+          "Your registration was rejected. Contact the administrator."
+        );
+      } else if (data.approval_status === "suspended") {
+        setStatus(
+          "Your account is suspended. Contact the administrator."
+        );
+      } else {
+        setStatus(
+          "Your email is verified. Your registration is awaiting Super Admin approval. Clinical access is not yet enabled."
+        );
+      }
+    } catch {
+      setApproved(false);
+      setStatus(
+        "Unable to check registration. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void checkStatus();
+  }, []);
+
+  async function resendVerification() {
+    if (!email) {
+      setMessage(
+        "Please sign in before requesting verification."
+      );
+      return;
+    }
+
+    setSending(true);
+    setMessage("");
+
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email,
+        options: {
+          emailRedirectTo:
+            "https://fp.dose-tracker.com/login",
+        },
+      });
+
+      if (error) {
+        setMessage(error.message);
+      } else {
+        setMessage(
+          "Verification request submitted. Check your inbox and spam folder."
+        );
+      }
+    } catch {
+      setMessage(
+        "Unable to resend verification email."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#f0fdfa",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 24,
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
+      <section
+        style={{
+          background: "white",
+          padding: 32,
+          borderRadius: 16,
+          maxWidth: 480,
+          width: "100%",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+        }}
+      >
+        <h1>Family Planning — DoseTrack</h1>
+        <h2>Staff Registration Status</h2>
+
+        {email && (
+          <p>
+            <strong>Email:</strong> {email}
+          </p>
+        )}
+
+        <p>{status}</p>
+
+        {!loading && !verified && email && (
+          <button
+            type="button"
+            onClick={resendVerification}
+            disabled={sending}
+            style={{
+              padding: 14,
+              background: "#0f766e",
+              color: "white",
+              border: "none",
+              borderRadius: 8,
+              cursor: "pointer",
+              width: "100%",
+              marginBottom: 12,
+            }}
+          >
+            {sending
+              ? "Sending..."
+              : "Resend Verification Email"}
+          </button>
+        )}
+
+        {!loading && verified && !approved && (
+          <p>
+            Your administrator must verify your
+            professional registration and approve
+            your account before clinical access
+            is enabled.
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => void checkStatus()}
+          disabled={loading}
+          style={{
+            padding: 12,
+            width: "100%",
+            marginBottom: 12,
+            cursor: "pointer",
+          }}
+        >
+          {loading
+            ? "Checking..."
+            : "Refresh Registration Status"}
+        </button>
+
+        {message && (
+          <p role="status">{message}</p>
+        )}
+
+        <Link href="/login">
+          Back to login
+        </Link>
+      </section>
+    </main>
+  );
+}
