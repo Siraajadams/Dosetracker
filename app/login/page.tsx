@@ -1,28 +1,23 @@
 
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function LoginPage() {
   const router = useRouter();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [resetMode, setResetMode] = useState(false);
 
-  async function login(e: FormEvent<HTMLFormElement>) {
+  async function login(e: React.FormEvent) {
     e.preventDefault();
+    setBusy(true);
     setMessage("");
-
-    if (!email.trim() || !password) {
-      setMessage("Please enter your email and password.");
-      return;
-    }
-
-    setLoading(true);
 
     try {
       const { data, error } =
@@ -31,175 +26,247 @@ export default function LoginPage() {
           password,
         });
 
-      if (error) throw error;
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
       if (!data.user) {
-        throw new Error("Unable to identify your account.");
+        setMessage("Unable to sign in.");
+        return;
+      }
+
+      const { data: isAdmin, error: adminError } =
+        await supabase.rpc("dt_is_super_admin");
+
+      if (adminError) {
+        setMessage(adminError.message);
+        return;
+      }
+
+      if (isAdmin) {
+        router.replace("/admin/staff-approvals");
+        return;
       }
 
       const { data: profile, error: profileError } =
         await supabase
           .from("staff_profiles")
-          .select("role, approval_status, is_active")
+          .select("approval_status,is_active")
           .eq("id", data.user.id)
           .maybeSingle();
 
-      if (profileError) throw profileError;
-
-      if (!profile) {
-        setMessage(
-          "No staff profile found. Contact the administrator."
-        );
-        return;
-      }
-
-      const { role, approval_status, is_active } = profile;
-
-      if (role === "super_admin") {
-        if (
-          approval_status !== "approved" ||
-          is_active !== true
-        ) {
-          setMessage("Super Admin account is not active.");
-          return;
-        }
-
-        router.replace("/admin/staff-approvals");
-        return;
-      }
-
-      if (approval_status === "rejected") {
-        setMessage(
-          "Your registration was not approved. Contact the administrator."
-        );
+      if (profileError) {
+        setMessage(profileError.message);
         return;
       }
 
       if (
-        approval_status !== "approved" ||
-        is_active !== true
+        !data.user.email_confirmed_at ||
+        profile?.approval_status !== "approved" ||
+        profile?.is_active !== true
       ) {
         router.replace("/pending-approval");
         return;
       }
 
-      if (role === "nurse") {
-        router.replace("/family-planning");
-        return;
-      }
-
-      if (
-        role === "site_admin" ||
-        role === "receptionist"
-      ) {
-        router.replace("/dosetrack");
-        return;
-      }
-
-      setMessage(
-        "Your account role is not configured for access."
-      );
-    } catch (err: unknown) {
-      setMessage(
-        err instanceof Error
-          ? err.message
-          : "Login failed. Please try again."
-      );
+      router.replace("/dosetrack");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
+  async function resetPassword() {
+    if (!email.trim()) {
+      setMessage("Enter your email address first.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+
+    const { error } = await supabase.auth.resetPasswordForEmail(
+      email.trim(),
+      {
+        redirectTo:
+          window.location.origin + "/reset-password",
+      }
+    );
+
+    setBusy(false);
+    setMessage(
+      error
+        ? error.message
+        : "If the account exists, password reset instructions will be sent."
+    );
+  }
+
+  async function resendVerification() {
+    if (!email.trim()) {
+      setMessage("Enter your email address first.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: email.trim(),
+      options: {
+        emailRedirectTo:
+          window.location.origin + "/pending-approval",
+      },
+    });
+
+    setBusy(false);
+    setMessage(
+      error
+        ? error.message
+        : "If eligible, a verification email will be sent."
+    );
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    width: "100%",
+    padding: 14,
+    borderRadius: 9,
+    border: "1px solid #cbd5e1",
+    boxSizing: "border-box",
+    fontSize: 16,
+  };
+
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background:
-          "linear-gradient(135deg, #e0f2fe, #f8fafc)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "Arial, sans-serif",
-        padding: 24,
-      }}
-    >
-      <section
-        style={{
-          width: "100%",
-          maxWidth: 420,
-          background: "white",
-          padding: 32,
-          borderRadius: 22,
-          boxShadow: "0 8px 25px rgba(0,0,0,0.12)",
-        }}
-      >
+    <main style={{
+      minHeight: "100vh",
+      display: "grid",
+      placeItems: "center",
+      background: "#f0f7f7",
+      fontFamily: "Arial",
+      padding: 20,
+    }}>
+      <section style={{
+        background: "white",
+        padding: 35,
+        borderRadius: 18,
+        width: "100%",
+        maxWidth: 460,
+        boxShadow: "0 8px 25px #0001",
+      }}>
         <h1>DoseTrack Login</h1>
         <p>Clinical Staff / Administrator Access</p>
 
-        <form
-          onSubmit={login}
-          style={{
-            display: "grid",
-            gap: 14,
-            marginTop: 24,
-          }}
-        >
+        <form onSubmit={login}
+          style={{ display: "grid", gap: 16 }}>
           <input
             type="email"
             placeholder="Email address"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
             required
-            style={{
-              padding: 14,
-              borderRadius: 10,
-              border: "1px solid #cbd5e1",
-            }}
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            style={fieldStyle}
           />
 
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-            style={{
-              padding: 14,
-              borderRadius: 10,
-              border: "1px solid #cbd5e1",
-            }}
-          />
+          {!resetMode && (
+            <div style={{ position: "relative" }}>
+              <input
+                type={showPassword ? "text" : "password"}
+                placeholder="Password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                style={{
+                  ...fieldStyle,
+                  paddingRight: 75,
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={
+                  showPassword
+                    ? "Hide password"
+                    : "Show password"
+                }
+                style={{
+                  position: "absolute",
+                  right: 10,
+                  top: 12,
+                  border: 0,
+                  background: "transparent",
+                  cursor: "pointer",
+                }}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+          )}
 
           {message && (
-            <p
-              role="alert"
-              style={{
-                color: "#b91c1c",
-                fontSize: 14,
-              }}
-            >
+            <p role="status" style={{ color: "#a33" }}>
               {message}
             </p>
           )}
 
+          {!resetMode ? (
+            <button
+              disabled={busy}
+              type="submit"
+              style={{
+                padding: 15,
+                background: "#075c59",
+                color: "white",
+                border: 0,
+                borderRadius: 9,
+                cursor: "pointer",
+              }}
+            >
+              {busy ? "Please wait..." : "Login"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={resetPassword}
+              style={{
+                padding: 15,
+                background: "#075c59",
+                color: "white",
+                border: 0,
+                borderRadius: 9,
+              }}
+            >
+              Send Password Reset Email
+            </button>
+          )}
+        </form>
+
+        <div style={{
+          display: "grid",
+          gap: 14,
+          marginTop: 22,
+          textAlign: "center",
+        }}>
           <button
-            type="submit"
-            disabled={loading}
-            style={{
-              padding: 14,
-              background: "#0f766e",
-              color: "white",
-              border: "none",
-              borderRadius: 10,
-              fontWeight: "bold",
-              cursor: loading ? "wait" : "pointer",
-              opacity: loading ? 0.7 : 1,
+            type="button"
+            onClick={() => {
+              setResetMode(!resetMode);
+              setMessage("");
             }}
           >
-            {loading ? "Signing in..." : "Login"}
+            {resetMode ? "Back to Login" : "Forgot Password?"}
           </button>
-        </form>
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={resendVerification}
+          >
+            Resend Verification Email
+          </button>
+        </div>
       </section>
     </main>
   );
