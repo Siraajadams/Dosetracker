@@ -2,6 +2,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Staff = {
@@ -17,12 +18,15 @@ type Staff = {
 };
 
 export default function StaffApprovals() {
+  const router = useRouter();
+
   const [staff, setStaff] = useState<Staff[]>([]);
   const [authorized, setAuthorized] = useState(false);
   const [message, setMessage] = useState("Checking permissions...");
   const [busy, setBusy] = useState("");
   const [adminId, setAdminId] = useState("");
-  const [verified, setVerified] = useState<Record<string, boolean>>({});
+  const [verified, setVerified] =
+    useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     setMessage("Checking permissions...");
@@ -85,11 +89,31 @@ export default function StaffApprovals() {
     void load();
   }, [load]);
 
+  function selectClinic(person: Staff) {
+    if (
+      !authorized ||
+      person.role !== "nurse" ||
+      person.approval_status !== "approved" ||
+      !person.is_active
+    ) {
+      setMessage("Approve the nurse before assigning a clinic.");
+      return;
+    }
+
+    router.push(
+      `/admin/assign-clinic?staffId=${encodeURIComponent(person.id)}`
+    );
+  }
+
   async function change(
     person: Staff,
     status: "approved" | "rejected" | "suspended"
   ) {
-    if (!authorized || person.role !== "nurse" || person.id === adminId) {
+    if (
+      !authorized ||
+      person.role !== "nurse" ||
+      person.id === adminId
+    ) {
       setMessage("This account cannot be modified here.");
       return;
     }
@@ -106,45 +130,77 @@ export default function StaffApprovals() {
       }
 
       if (!verified[person.id]) {
-        setMessage("Verify SANC registration before approval.");
+        setMessage(
+          "Verify SANC registration before approval."
+        );
         return;
       }
     }
 
-    if (!window.confirm(
-      `Change ${person.full_name} to ${status}?`
-    )) {
+    if (
+      !window.confirm(
+        `Change ${person.full_name} to ${status}?`
+      )
+    ) {
       return;
     }
 
     setBusy(person.id);
     setMessage("");
 
-    const { data, error } = await supabase
-      .from("staff_profiles")
-      .update({
-        approval_status: status,
-        is_active: status === "approved",
-        approved_at:
-          status === "approved" ? new Date().toISOString() : null,
-        approved_by: status === "approved" ? adminId : null,
-      })
-      .eq("id", person.id)
-      .eq("role", "nurse")
-      .select("id");
+    try {
+      const { data, error } = await supabase
+        .from("staff_profiles")
+        .update({
+          approval_status: status,
+          is_active: status === "approved",
+          approved_at:
+            status === "approved"
+              ? new Date().toISOString()
+              : null,
+          approved_by:
+            status === "approved" ? adminId : null,
+        })
+        .eq("id", person.id)
+        .eq("role", "nurse")
+        .select("id");
 
-    if (error) {
-      setMessage(error.message);
-    } else if (!data?.length) {
-      setMessage("No record updated. Check database permissions.");
-    } else {
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      if (!data?.length) {
+        setMessage(
+          "No record updated. Check database permissions."
+        );
+        return;
+      }
+
+      setVerified(prev => ({
+        ...prev,
+        [person.id]: false,
+      }));
+
+      if (status === "approved") {
+        router.push(
+          `/admin/assign-clinic?staffId=${encodeURIComponent(person.id)}`
+        );
+        return;
+      }
+
       await load();
-      setVerified(prev => ({ ...prev, [person.id]: false }));
       setMessage(`${person.full_name}: ${status}`);
+    } finally {
+      setBusy("");
     }
-
-    setBusy("");
   }
+
+  const buttonStyle = {
+    padding: "12px 16px",
+    borderRadius: 8,
+    cursor: "pointer",
+  };
 
   return (
     <main
@@ -167,10 +223,18 @@ export default function StaffApprovals() {
         <>
           <p>
             Registered nurses: {staff.length} | Pending:{" "}
-            {staff.filter(p => p.approval_status === "pending").length}
+            {
+              staff.filter(
+                p => p.approval_status === "pending"
+              ).length
+            }
           </p>
 
-          <button onClick={() => void load()}>
+          <button
+            onClick={() => void load()}
+            disabled={busy !== ""}
+            style={buttonStyle}
+          >
             Refresh registrations
           </button>
 
@@ -185,104 +249,163 @@ export default function StaffApprovals() {
               <p>No nurse registrations found.</p>
             )}
 
-            {staff.map(person => (
-              <section
-                key={person.id}
-                style={{
-                  padding: 20,
-                  background: "white",
-                  border: "1px solid #cbd5e1",
-                  borderRadius: 12,
-                }}
-              >
-                <h2>{person.full_name}</h2>
-                <p>Email: {person.email}</p>
-                <p>SANC: {person.sanc_number || "Not supplied"}</p>
-                <p>
-                  Category:{" "}
-                  {person.professional_category || "Not supplied"}
-                </p>
-                <p>Status: {person.approval_status}</p>
-                <p>
-                  Email verification:{" "}
-                  {person.email_verified_at
-                    ? "Recorded"
-                    : "Not recorded"}
-                </p>
-                <p>
-                  Clinical access:{" "}
-                  {person.is_active ? "Active" : "Inactive"}
-                </p>
+            {staff.map(person => {
+              const approved =
+                person.approval_status === "approved" &&
+                person.is_active;
 
-                <label
+              return (
+                <section
+                  key={person.id}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    marginBottom: 16,
+                    padding: 20,
+                    background: "white",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 12,
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={verified[person.id] || false}
-                    onChange={e =>
-                      setVerified(prev => ({
-                        ...prev,
-                        [person.id]: e.target.checked,
-                      }))
-                    }
-                  />
-                  I have independently verified this nurse's
-                  SANC registration.
-                </label>
+                  <h2>{person.full_name}</h2>
 
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 10,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <button
-                    disabled={busy !== ""}
-                    onClick={() => void change(person, "approved")}
+                  <p>Email: {person.email}</p>
+
+                  <p>
+                    SANC:{" "}
+                    {person.sanc_number || "Not supplied"}
+                  </p>
+
+                  <p>
+                    Category:{" "}
+                    {person.professional_category ||
+                      "Not supplied"}
+                  </p>
+
+                  <p>
+                    Status:{" "}
+                    <strong>{person.approval_status}</strong>
+                  </p>
+
+                  <p>
+                    Email verification:{" "}
+                    {person.email_verified_at
+                      ? "Recorded"
+                      : "Not recorded"}
+                  </p>
+
+                  <p>
+                    Account:{" "}
+                    {person.is_active
+                      ? "Active"
+                      : "Inactive"}
+                  </p>
+
+                  {approved ? (
+                    <div
+                      style={{
+                        padding: 16,
+                        background: "#f0fdfa",
+                        border: "1px solid #99f6e4",
+                        borderRadius: 8,
+                        marginBottom: 16,
+                      }}
+                    >
+                      <p>
+                        <strong>Approval completed</strong>
+                      </p>
+
+                      <p>
+                        Continue to clinic assignment to
+                        configure clinical access.
+                      </p>
+
+                      <button
+                        disabled={busy !== ""}
+                        onClick={() => selectClinic(person)}
+                        style={{
+                          ...buttonStyle,
+                          background: "#0f766e",
+                          color: "white",
+                          border: "none",
+                        }}
+                      >
+                        Select Clinic →
+                      </button>
+                    </div>
+                  ) : (
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 16,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={
+                          verified[person.id] || false
+                        }
+                        onChange={e =>
+                          setVerified(prev => ({
+                            ...prev,
+                            [person.id]:
+                              e.target.checked,
+                          }))
+                        }
+                      />
+                      I have independently verified this
+                      nurse&apos;s SANC registration.
+                    </label>
+                  )}
+
+                  <div
                     style={{
-                      padding: 12,
-                      background: "#0f766e",
-                      color: "white",
-                      border: "none",
-                      borderRadius: 8,
+                      display: "flex",
+                      gap: 10,
+                      flexWrap: "wrap",
                     }}
                   >
-                    {busy === person.id
-                      ? "Processing..."
-                      : "Approve & Activate"}
-                  </button>
+                    {!approved && (
+                      <button
+                        disabled={busy !== ""}
+                        onClick={() =>
+                          void change(person, "approved")
+                        }
+                        style={{
+                          ...buttonStyle,
+                          background: "#0f766e",
+                          color: "white",
+                          border: "none",
+                        }}
+                      >
+                        {busy === person.id
+                          ? "Processing..."
+                          : "Approve & Activate"}
+                      </button>
+                    )}
 
-                  <button
-                    disabled={busy !== ""}
-                    onClick={() => void change(person, "rejected")}
-                    style={{
-                      padding: 12,
-                      borderRadius: 8,
-                    }}
-                  >
-                    Reject
-                  </button>
+                    <button
+                      disabled={busy !== ""}
+                      onClick={() =>
+                        void change(person, "rejected")
+                      }
+                      style={buttonStyle}
+                    >
+                      Reject
+                    </button>
 
-                  <button
-                    disabled={busy !== ""}
-                    onClick={() => void change(person, "suspended")}
-                    style={{
-                      padding: 12,
-                      borderRadius: 8,
-                    }}
-                  >
-                    Suspend
-                  </button>
-                </div>
-              </section>
-            ))}
+                    <button
+                      disabled={busy !== ""}
+                      onClick={() =>
+                        void change(person, "suspended")
+                      }
+                      style={buttonStyle}
+                    >
+                      Suspend
+                    </button>
+                  </div>
+                </section>
+              );
+            })}
           </div>
         </>
       )}
