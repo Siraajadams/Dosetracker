@@ -400,16 +400,43 @@ if (!record || !record.site_id) {
               />
             </section>
 
-            <section style={card}>
-              <h2>Family Planning Services</h2>
+            
+<section style={card}>
+  <h2>Clinical Services</h2>
 
-              <p style={{ color: "#64748b" }}>
-                Patient profile loaded. The family planning
-                assessment, contraceptive administration
-                and follow-up modules will be connected
-                here.
-              </p>
-            </section>
+  <p style={{ color: "#64748b" }}>
+    Record medication administration, review
+    previous treatments and manage follow-up
+    appointments.
+  </p>
+
+  <button
+    type="button"
+    style={{
+      ...button,
+      marginTop: 12,
+      marginBottom: 12,
+    }}
+    onClick={() => {
+      router.push(
+        `/nurse/patients/${patientId}/administration`
+      );
+    }}
+  >
+    Record Medication Administration
+  </button>
+
+  <p
+    style={{
+      fontSize: 13,
+      color: "#64748b",
+    }}
+  >
+    Includes contraceptive injections, GLP-1
+    treatments, vaccinations and long-acting PrEP.
+  </p>
+</section>
+
           </>
         )}
       </div>
