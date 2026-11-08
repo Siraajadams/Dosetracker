@@ -169,48 +169,22 @@ export default function PatientRecordPage() {
         );
       }
 
-      // 3. Load patient, restricted to assigned sites.
-      const { data: record, error: patientError } =
+      // 3. Load patient only when assigned to its clinic.
+      const { data: record, error: patientError } = await supabase
+        .from("patients")
+        .select(`
+          id, patient_clinic_id, site_id, first_name, surname,
+          id_number, passport_number, date_of_birth, gender,
+          mobile_number, email, address, suburb, city, province,
+          postal_code
+        `)
+        .eq("id", patientId)
+        .in("site_id", siteIds)
+        .maybeSingle();
 
-  await supabase
-    .from("patients")
-    .select(`
-      id,
-      patient_clinic_id,
-      site_id,
-      first_name,
-      surname,
-      id_number,
-      passport_number,
-      date_of_birth,
-      gender,
-      mobile_number,
-      email,
-      address,
-      suburb,
-      city,
-      province,
-      postal_code
-    `)
-    .eq("id", patientId)
-    .in("site_id", siteIds)
-    .maybeSingle();
-
-if (patientError) {
-  throw new Error(patientError.message);
-}
-
-if (!record || !record.site_id) {
-  throw new Error(
-    "Patient not found or access is not authorised."
-  );
-}
-
-
-      if (!record || !record.site_id) {
-        throw new Error(
-          "Patient not found or access is not authorised."
-        );
+      if (patientError) throw new Error(patientError.message);
+      if (!record?.site_id) {
+        throw new Error("Patient not found or access is not authorised.");
       }
 
       // 4. Confirm that the clinic is active.
@@ -419,7 +393,7 @@ if (!record || !record.site_id) {
     }}
     onClick={() => {
       router.push(
-        `/nurse/patients/${patientId}/administration`
+        `/nurse/patients/${patient.id}/administration`
       );
     }}
   >
