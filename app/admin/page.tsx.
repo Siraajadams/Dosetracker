@@ -1,0 +1,58 @@
+
+"use client";
+
+import Link from "next/link";
+
+const adminModules = [
+  {
+    title: "Staff Approvals",
+    description: "Verify and activate nurse accounts",
+    href: "/admin/staff-approvals",
+  },
+  {
+    title: "Manage Clinics",
+    description: "Update MHFL, CFS, Demander and contact details",
+    href: "/admin/clinics",
+  },
+  {
+    title: "Assign Clinics",
+    description: "Assign approved nurses to facilities",
+    href: "/admin/assign-clinic",
+  },
+];
+
+export default function AdminDashboard() {
+  return (
+    <main className="min-h-screen bg-slate-50 p-6">
+      <div className="mx-auto max-w-5xl">
+        <h1 className="text-3xl font-bold text-slate-900">
+          DoseTrack Super Admin
+        </h1>
+
+        <p className="mt-2 text-slate-600">
+          Family Planning Administration Dashboard
+        </p>
+
+        <div className="mt-8 grid gap-5 md:grid-cols-2">
+          {adminModules.map((module) => (
+            <Link
+              key={module.href}
+              href={module.href}
+              className="rounded-xl border bg-white p-6 shadow-sm hover:border-blue-500 hover:shadow-md"
+            >
+              <h2 className="text-xl font-semibold text-slate-900">
+                {module.title}
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                {module.description}
+              </p>
+              <p className="mt-4 font-medium text-blue-600">
+                Open →
+              </p>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </main>
+  );
+}
