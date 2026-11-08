@@ -171,18 +171,42 @@ export default function PatientRecordPage() {
 
       // 3. Load patient, restricted to assigned sites.
       const { data: record, error: patientError } =
-        await supabase
-          .from("patients")
-          .select(
-            "id,patient_clinic_id,site_id,first_name,surname," +
-              "id_number,passport_number,date_of_birth,gender," +
-              "mobile_number,email,address,suburb,city,province,postal_code"
-          )
-          .eq("id", patientId)
-          .in("site_id", siteIds)
-          .maybeSingle();
+        
+const { data: record, error: patientError } =
+  await supabase
+    .from("patients")
+    .select(`
+      id,
+      patient_clinic_id,
+      site_id,
+      first_name,
+      surname,
+      id_number,
+      passport_number,
+      date_of_birth,
+      gender,
+      mobile_number,
+      email,
+      address,
+      suburb,
+      city,
+      province,
+      postal_code
+    `)
+    .eq("id", patientId)
+    .in("site_id", siteIds)
+    .maybeSingle();
 
-      if (patientError) throw patientError;
+if (patientError) {
+  throw new Error(patientError.message);
+}
+
+if (!record || !record.site_id) {
+  throw new Error(
+    "Patient not found or access is not authorised."
+  );
+}
+
 
       if (!record || !record.site_id) {
         throw new Error(
