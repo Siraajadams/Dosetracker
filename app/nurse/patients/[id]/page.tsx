@@ -171,8 +171,7 @@ export default function PatientRecordPage() {
 
       // 3. Load patient, restricted to assigned sites.
       const { data: record, error: patientError } =
-        
-const { data: record, error: patientError } =
+
   await supabase
     .from("patients")
     .select(`
