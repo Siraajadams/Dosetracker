@@ -1,7 +1,7 @@
-
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 type Clinic = {
@@ -99,11 +99,22 @@ const editableKeys = groups.flatMap(
 export default function AdminClinicsPage() {
   const [clinics, setClinics] = useState<Clinic[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [search, setSearch] = useState("");
+  const [original, setOriginal] = useState<Clinic | null>(null);
   const [form, setForm] = useState<Clinic | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  const filteredClinics = useMemo(() => clinics.filter((clinic) =>
+    `${clinic.site_name} ${clinic.alternative_name ?? ""} ${clinic.mhfl_number ?? ""} ${clinic.demander_number ?? ""}`
+      .toLowerCase().includes(search.toLowerCase().trim())
+  ), [clinics, search]);
+
+  const isDirty = Boolean(form && original && editableKeys.some(
+    (key) => (form[key] ?? "") !== (original[key] ?? "")
+  ));
 
   useEffect(() => {
     let cancelled = false;
@@ -137,6 +148,7 @@ export default function AdminClinicsPage() {
         if (rows.length > 0) {
           setSelectedId(rows[0].id);
           setForm({ ...rows[0] });
+          setOriginal({ ...rows[0] });
         }
       }
 
@@ -154,7 +166,9 @@ export default function AdminClinicsPage() {
     const clinic = clinics.find((item) => item.id === id);
 
     setSelectedId(id);
+    if (isDirty && !window.confirm("Discard unsaved clinic changes?")) return;
     setForm(clinic ? { ...clinic } : null);
+    setOriginal(clinic ? { ...clinic } : null);
     setError("");
     setSuccess("");
   }
@@ -167,7 +181,7 @@ export default function AdminClinicsPage() {
   }
 
   async function saveClinic(
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -175,6 +189,11 @@ export default function AdminClinicsPage() {
 
     if (!form.site_name.trim()) {
       setError("Clinic name is required.");
+      return;
+    }
+
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setError("Enter a valid facility email address.");
       return;
     }
 
@@ -189,6 +208,7 @@ export default function AdminClinicsPage() {
       details[key] = value?.trim() || null;
     }
 
+    try {
     const { data, error: saveError } = await supabase.rpc(
       "fp_admin_update_clinic",
       {
@@ -200,7 +220,20 @@ export default function AdminClinicsPage() {
     if (saveError) {
       setError(saveError.message);
     } else {
-      const updated = data as Clinic;
+      // Prefer the row returned by the RPC. If the function returns
+      // a boolean or void, refresh through the admin listing RPC.
+      const returned = Array.isArray(data) ? data[0] : data;
+      let updated: Clinic;
+      if (returned && typeof returned === "object" && "id" in returned) {
+        updated = returned as Clinic;
+      } else {
+        const { data: refreshed, error: refreshError } =
+          await supabase.rpc("fp_admin_list_clinics");
+        if (refreshError) throw refreshError;
+        const found = ((refreshed ?? []) as Clinic[]).find(c => c.id === form.id);
+        if (!found) throw new Error("Clinic was saved but could not be reloaded.");
+        updated = found;
+      }
 
       setClinics((previous) =>
         previous.map((item) =>
@@ -209,13 +242,18 @@ export default function AdminClinicsPage() {
       );
 
       setForm({ ...updated });
+      setOriginal({ ...updated });
       setSuccess("Clinic information saved successfully.");
     }
 
-    setSaving(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to save clinic.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  const inputStyle: React.CSSProperties = {
+  const inputStyle: CSSProperties = {
     width: "100%",
     padding: "11px 12px",
     border: "1px solid #cbd5e1",
@@ -241,6 +279,10 @@ export default function AdminClinicsPage() {
       <p style={{ marginTop: 8, color: "#475569" }}>
         Update facility identifiers, registration information
         and clinic contact details.
+      </p>
+
+      <p style={{ marginTop: 6, color: "#64748b" }}>
+        {clinics.length} registered clinics · {clinics.filter(c => c.is_active).length} active
       </p>
 
       {loading && <p>Loading clinics...</p>}
@@ -272,6 +314,13 @@ export default function AdminClinicsPage() {
       {!loading && clinics.length > 0 && (
         <>
           <div style={{ marginTop: 28 }}>
+            <label htmlFor="clinic-search" style={{ display: "block", fontWeight: 600 }}>
+              Search clinics
+            </label>
+            <input id="clinic-search" type="search" value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search name, MHFL or Demander number"
+              style={{ ...inputStyle, marginTop: 8, marginBottom: 16 }} />
             <label
               htmlFor="clinic-select"
               style={{ fontWeight: 600 }}
@@ -287,13 +336,14 @@ export default function AdminClinicsPage() {
               }
               style={{ ...inputStyle, marginTop: 8 }}
             >
-              {clinics.map((clinic) => (
+              {(filteredClinics.some(c => c.id === selectedId) ? filteredClinics : [...clinics.filter(c => c.id === selectedId), ...filteredClinics]).map((clinic) => (
                 <option key={clinic.id} value={clinic.id}>
                   {clinic.site_name}
                   {clinic.is_active ? "" : " (Inactive)"}
                 </option>
               ))}
             </select>
+            {search && <p style={{ color: "#64748b" }}>{filteredClinics.length} matching clinic(s). Select from the list above.</p>}
           </div>
 
           {form && (
@@ -373,7 +423,7 @@ export default function AdminClinicsPage() {
 
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || !isDirty}
                 style={{
                   marginTop: 20,
                   padding: "13px 24px",
@@ -383,13 +433,16 @@ export default function AdminClinicsPage() {
                   borderRadius: 8,
                   fontWeight: 600,
                   cursor: saving ? "wait" : "pointer",
-                  opacity: saving ? 0.65 : 1,
+                  opacity: saving || !isDirty ? 0.65 : 1,
                 }}
               >
                 {saving
                   ? "Saving..."
                   : "Save Clinic Information"}
               </button>
+              {isDirty && <span style={{ marginLeft: 12, color: "#92400e" }}>
+                Unsaved changes
+              </span>}
             </form>
           )}
         </>
