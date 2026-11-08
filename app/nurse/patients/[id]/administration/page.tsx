@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -23,6 +22,7 @@ type Patient = {
 type Administration = {
   id: string;
   service_type: string;
+  clinical_action: string | null;
   medication_name: string;
   dose: string;
   route: string;
@@ -36,46 +36,39 @@ type Administration = {
   administered_by: string;
 };
 
-const categories = [
-  { value: "family_planning", label: "Family Planning" },
-  { value: "glp1", label: "GLP-1 Treatment" },
-  { value: "vaccine", label: "Vaccination" },
-  { value: "prep_lai", label: "Long-acting PrEP" },
-  { value: "other", label: "Other Medication" },
-];
+type CatalogueItem = {
+  id: string;
+  icn_code: string | null;
+  medication_name: string;
+  category: string;
+  stock_unit: string;
+  administration_route: string | null;
+};
 
-const medications: Record<string, string[]> = {
-  family_planning: [
-    "Nur-Isterate",
-    "Depo-Provera",
-    "Other contraceptive",
-  ],
-  glp1: [
-    "Semaglutide",
-    "Tirzepatide",
-    "Liraglutide",
-    "Other GLP-1",
-  ],
-  vaccine: [
-    "HPV vaccine",
-    "Influenza vaccine",
-    "Hepatitis B vaccine",
-    "Other vaccine",
-  ],
-  prep_lai: [
-    "Cabotegravir LA",
-    "Lenacapavir",
-    "Other PrEP medication",
-  ],
-  other: ["Other medication"],
+function allowedActions(category: string): string[] {
+  switch (category) {
+    case "Injectable Contraceptive": return ["administered"];
+    case "Oral Contraceptive": return ["dispensed"];
+    case "Contraceptive Implant": return ["inserted", "removed"];
+    case "Barrier Contraceptive": return ["supplied"];
+    case "Procedure Consumable": return ["administered"];
+    default: return ["administered", "dispensed", "supplied"];
+  }
+}
+
+const actionLabels: Record<string, string> = {
+  administered: "Administered",
+  dispensed: "Dispensed",
+  inserted: "Inserted",
+  removed: "Removed",
+  supplied: "Supplied",
 };
 
 const initialForm = {
-  category: "family_planning",
   medication: "",
-  customMedication: "",
+  action: "",
   dose: "",
-  route: "Intramuscular",
+  route: "",
   injectionSite: "",
   batch: "",
   expiry: "",
@@ -191,6 +184,7 @@ export default function MedicationAdministrationPage() {
   const [nurseId, setNurseId] = useState("");
   const [clinicName, setClinicName] = useState("");
   const [history, setHistory] = useState<Administration[]>([]);
+  const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
   const [form, setForm] = useState<FormState>({
     ...initialForm,
     administeredAt: "",
@@ -303,7 +297,7 @@ export default function MedicationAdministrationPage() {
         await supabase
           .from("medication_administrations")
           .select(
-            "id,service_type,medication_name,dose,route,administered_at,injection_site,batch_number,expiry_date,adverse_events,clinical_notes,next_dose_date,administered_by"
+            "id,service_type,medication_name,dose,route,administered_at,injection_site,batch_number,expiry_date,adverse_events,clinical_notes,next_dose_date,administered_by,clinical_action"
           )
           .eq("patient_id", record.id)
           .eq("site_id", record.site_id)
@@ -312,6 +306,15 @@ export default function MedicationAdministrationPage() {
           });
 
       if (historyError) throw historyError;
+
+      const { data: catalogueData, error: catalogueError } = await supabase
+        .from("fp_medication_catalogue")
+        .select("id,icn_code,medication_name,category,stock_unit,administration_route")
+        .eq("is_active", true)
+        .order("category")
+        .order("medication_name");
+      if (catalogueError) throw catalogueError;
+      setCatalogue((catalogueData || []) as CatalogueItem[]);
 
       setPatient(record);
       setNurseId(userId);
@@ -344,23 +347,24 @@ export default function MedicationAdministrationPage() {
     setError("");
     setMessage("");
 
-    const medicationName =
-      form.medication.startsWith("Other")
-        ? form.customMedication.trim()
-        : form.medication;
-
-    if (!medicationName) {
-      setError("Select or enter a medication.");
+    const selectedMedication = catalogue.find((item) => item.id === form.medication);
+    if (!selectedMedication) {
+      setError("Select a medication from the approved Family Planning catalogue.");
       return;
     }
+    if (!allowedActions(selectedMedication.category).includes(form.action)) {
+      setError("Select the appropriate clinical action for this item.");
+      return;
+    }
+    const medicationName = selectedMedication.medication_name;
 
     if (!form.dose.trim()) {
-      setError("Enter the administered dose and units.");
+      setError("Enter the quantity and units recorded for this event.");
       return;
     }
 
     if (!form.batch.trim() || !form.expiry) {
-      setError("Batch number and expiry date are required.");
+      setError("Batch number and expiry date are required for traceability.");
       return;
     }
 
@@ -392,7 +396,7 @@ export default function MedicationAdministrationPage() {
 
     const administrationDay = form.administeredAt.slice(0, 10);
 
-    if (form.expiry < administrationDay) {
+    if (form.expiry && form.expiry < administrationDay) {
       setError(
         "The medication expired before the administration date."
       );
@@ -428,7 +432,9 @@ export default function MedicationAdministrationPage() {
             patient_id: patient.id,
             site_id: patient.site_id,
             administered_by: nurseId,
-            service_type: form.category,
+            service_type: "family_planning",
+            catalogue_item_id: selectedMedication.id,
+            clinical_action: form.action,
             medication_name: medicationName,
             dose: form.dose.trim(),
             route: form.route,
@@ -458,7 +464,7 @@ export default function MedicationAdministrationPage() {
       await loadData();
 
       setMessage(
-        "Medication administration saved successfully."
+        "Family Planning clinical event saved successfully."
       );
     } catch (err) {
       setError(getErrorMessage(err));
@@ -478,7 +484,7 @@ export default function MedicationAdministrationPage() {
     >
       <div style={{ maxWidth: 920, margin: "0 auto" }}>
         <h1 style={{ color: "#075c59" }}>
-          DoseTrack — Medication Administration
+          DoseTrack — Family Planning Clinical Record
         </h1>
 
         <button
@@ -552,74 +558,64 @@ export default function MedicationAdministrationPage() {
               >
                 <h2>Medication Details</h2>
 
-                <Field label="Service Category *">
-                  <select
-                    style={inputStyle}
-                    value={form.category}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        category: e.target.value,
-                        medication: "",
-                        customMedication: "",
-                      }))
-                    }
-                  >
-                    {categories.map((item) => (
-                      <option
-                        key={item.value}
-                        value={item.value}
-                      >
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Medication *">
+                <p><strong>Service:</strong> Family Planning</p>
+                <Field label="Medication / Commodity *">
                   <select
                     required
                     style={inputStyle}
                     value={form.medication}
-                    onChange={(e) =>
-                      update("medication", e.target.value)
-                    }
+                    onChange={(e) => {
+                      const selected = catalogue.find((item) => item.id === e.target.value);
+                      setForm((prev) => ({
+                        ...prev,
+                        medication: e.target.value,
+                        action: selected ? allowedActions(selected.category)[0] : "",
+                        route: selected?.administration_route || "Not applicable",
+                        dose: "",
+                        injectionSite: "",
+                      }));
+                    }}
                   >
-                    <option value="">
-                      Select medication
-                    </option>
-
-                    {(medications[form.category] || []).map(
-                      (name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      )
-                    )}
+                    <option value="">Select catalogue item</option>
+                    {Array.from(new Set(catalogue.map((item) => item.category))).map((category) => (
+                      <optgroup key={category} label={category}>
+                        {catalogue.filter((item) => item.category === category).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.medication_name} {item.icn_code ? `(ICN ${item.icn_code})` : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </Field>
+                {catalogue.length === 0 && (
+                  <p role="alert">No active catalogue items are available to this account.</p>
+                )}
+                {form.medication && (() => {
+                  const selected = catalogue.find((item) => item.id === form.medication);
+                  if (!selected) return null;
+                  return <p>Category: {selected.category} | Stock unit: {selected.stock_unit} | ICN: {selected.icn_code || "Not assigned"}</p>;
+                })()}
+                <Field label="Clinical Action *">
+                  <select
+                    required
+                    style={inputStyle}
+                    value={form.action}
+                    onChange={(e) => update("action", e.target.value)}
+                    disabled={!form.medication}
+                  >
+                    <option value="">Select action</option>
+                    {allowedActions(catalogue.find((item) => item.id === form.medication)?.category || "").map((action) => (
+                      <option key={action} value={action}>{actionLabels[action]}</option>
+                    ))}
                   </select>
                 </Field>
 
-                {form.medication.startsWith("Other") && (
-                  <Field label="Medication Name *">
-                    <input
-                      required
-                      style={inputStyle}
-                      value={form.customMedication}
-                      onChange={(e) =>
-                        update(
-                          "customMedication",
-                          e.target.value
-                        )
-                      }
-                    />
-                  </Field>
-                )}
-
-                <Field label="Dose and Units *">
+                <Field label="Actual Quantity / Dose and Units *">
                   <input
                     required
                     style={inputStyle}
-                    placeholder="Actual administered dose and units"
+                    placeholder="e.g. 1 ampoule, 1 pack, or documented dose"
                     value={form.dose}
                     onChange={(e) =>
                       update("dose", e.target.value)
@@ -640,6 +636,11 @@ export default function MedicationAdministrationPage() {
                     <option>Subcutaneous</option>
                     <option>Oral</option>
                     <option>Intradermal</option>
+                    <option>Subdermal</option>
+                    <option>Local infiltration</option>
+                    <option>External</option>
+                    <option>Internal</option>
+                    <option>Not applicable</option>
                     <option>Other</option>
                   </select>
                 </Field>
@@ -681,7 +682,7 @@ export default function MedicationAdministrationPage() {
                   />
                 </Field>
 
-                <Field label="Actual Administration Date and Time *">
+                <Field label="Clinical Event Date and Time *">
                   <input
                     type="datetime-local"
                     required
@@ -704,7 +705,7 @@ export default function MedicationAdministrationPage() {
                   gap: 16,
                 }}
               >
-                <h2>Pre-administration Safety Checks</h2>
+                <h2>Clinical Safety Checks</h2>
 
                 <p>
                   Confirm the clinical checks were completed
@@ -795,13 +796,13 @@ export default function MedicationAdministrationPage() {
                 >
                   {saving
                     ? "Saving..."
-                    : "Save Medication Administration"}
+                    : "Save Family Planning Event"}
                 </button>
               </section>
             </form>
 
             <section style={cardStyle}>
-              <h2>Medication Administration History</h2>
+              <h2>Family Planning Event History</h2>
 
               {history.length === 0 ? (
                 <p>No administrations recorded yet.</p>
@@ -819,7 +820,7 @@ export default function MedicationAdministrationPage() {
                       <h3>{item.medication_name}</h3>
 
                       <p>
-                        <strong>Administered:</strong>{" "}
+                        <strong>Event date:</strong>{" "}
                         {formatDateTime(
                           item.administered_at
                         )}
