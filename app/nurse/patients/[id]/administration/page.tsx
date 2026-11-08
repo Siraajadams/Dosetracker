@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -21,40 +22,18 @@ type Patient = {
 
 type Administration = {
   id: string;
+  service_type: string;
   medication_name: string;
   dose: string;
   route: string;
   administered_at: string;
-  batch_number: string;
+  injection_site: string | null;
+  batch_number: string | null;
+  expiry_date: string | null;
+  adverse_events: string | null;
+  clinical_notes: string | null;
+  next_dose_date: string | null;
   administered_by: string;
-  next_due_date: string | null;
-};
-
-const inputStyle: CSSProperties = {
-  width: "100%",
-  padding: 12,
-  border: "1px solid #cbd5e1",
-  borderRadius: 8,
-  boxSizing: "border-box",
-  fontSize: 16,
-};
-
-const cardStyle: CSSProperties = {
-  background: "white",
-  border: "1px solid #e2e8f0",
-  borderRadius: 14,
-  padding: 22,
-  marginBottom: 20,
-};
-
-const primaryButton: CSSProperties = {
-  background: "#0f766e",
-  color: "white",
-  padding: "13px 20px",
-  border: 0,
-  borderRadius: 8,
-  cursor: "pointer",
-  fontWeight: 600,
 };
 
 const categories = [
@@ -97,7 +76,7 @@ const initialForm = {
   customMedication: "",
   dose: "",
   route: "Intramuscular",
-  administrationSite: "",
+  injectionSite: "",
   batch: "",
   expiry: "",
   administeredAt: "",
@@ -105,8 +84,39 @@ const initialForm = {
   contraindicationsReviewed: false,
   consentConfirmed: false,
   notes: "",
-  adverseReaction: "",
-  nextDueDate: "",
+  adverseEvents: "",
+  nextDoseDate: "",
+};
+
+type FormState = typeof initialForm;
+
+const inputStyle: CSSProperties = {
+  width: "100%",
+  padding: 12,
+  border: "1px solid #cbd5e1",
+  borderRadius: 8,
+  boxSizing: "border-box",
+  fontSize: 16,
+  background: "#fff",
+};
+
+const cardStyle: CSSProperties = {
+  background: "#fff",
+  border: "1px solid #e2e8f0",
+  borderRadius: 14,
+  padding: 22,
+  marginBottom: 20,
+};
+
+const buttonStyle: CSSProperties = {
+  background: "#0f766e",
+  color: "white",
+  padding: "13px 20px",
+  border: 0,
+  borderRadius: 8,
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 15,
 };
 
 function Field({
@@ -114,7 +124,7 @@ function Field({
   children,
 }: {
   label: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <label style={{ display: "grid", gap: 7 }}>
@@ -125,15 +135,55 @@ function Field({
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("en-ZA", {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("en-ZA", {
     dateStyle: "medium",
     timeStyle: "short",
   });
 }
 
+function localDateTime() {
+  const now = new Date();
+  const local = new Date(
+    now.getTime() - now.getTimezoneOffset() * 60000
+  );
+  return local.toISOString().slice(0, 16);
+}
+
+function getErrorMessage(err: unknown): string {
+  if (err && typeof err === "object") {
+    const value = err as {
+      message?: string;
+      code?: string;
+      details?: string;
+    };
+
+    if (value.code === "PGRST205") {
+      return "The medication administration table was not found. Check the Supabase SQL migration and reload the schema.";
+    }
+
+    if (value.code === "42501") {
+      return "Database access denied. Check nurse approval, clinic assignment and RLS policies.";
+    }
+
+    return [
+      value.message,
+      value.code ? `Code: ${value.code}` : "",
+      value.details,
+    ]
+      .filter(Boolean)
+      .join(" — ");
+  }
+
+  return "An unexpected error occurred.";
+}
+
 export default function MedicationAdministrationPage() {
   const router = useRouter();
   const params = useParams();
+
   const patientId =
     typeof params.id === "string" ? params.id : "";
 
@@ -141,17 +191,21 @@ export default function MedicationAdministrationPage() {
   const [nurseId, setNurseId] = useState("");
   const [clinicName, setClinicName] = useState("");
   const [history, setHistory] = useState<Administration[]>([]);
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState<FormState>({
+    ...initialForm,
+    administeredAt: "",
+  });
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
-  function update<K extends keyof typeof initialForm>(
+  function update<K extends keyof FormState>(
     key: K,
-    value: (typeof initialForm)[K]
+    value: FormState[K]
   ) {
-    setForm(prev => ({ ...prev, [key]: value }));
+    setForm((prev) => ({ ...prev, [key]: value }));
   }
 
   const loadData = useCallback(async () => {
@@ -159,6 +213,10 @@ export default function MedicationAdministrationPage() {
     setError("");
 
     try {
+      if (!patientId) {
+        throw new Error("Invalid patient reference.");
+      }
+
       const { data: auth, error: authError } =
         await supabase.auth.getUser();
 
@@ -181,8 +239,8 @@ export default function MedicationAdministrationPage() {
       if (
         !auth.user.email_confirmed_at ||
         profile?.role !== "nurse" ||
-        profile.approval_status !== "approved" ||
-        profile.is_active !== true
+        profile?.approval_status !== "approved" ||
+        profile?.is_active !== true
       ) {
         router.replace("/pending-approval");
         return;
@@ -197,14 +255,16 @@ export default function MedicationAdministrationPage() {
       if (assignmentError) throw assignmentError;
 
       const siteIds = (assignments || [])
-        .map(item => item.site_id)
+        .map((item) => item.site_id as string)
         .filter(Boolean);
 
-      if (siteIds.length === 0) {
-        throw new Error("No clinic is assigned to this nurse.");
+      if (!siteIds.length) {
+        throw new Error(
+          "No clinic is assigned to this nurse."
+        );
       }
 
-      const { data: record, error: patientError } =
+      const { data: patientData, error: patientError } =
         await supabase
           .from("patients")
           .select(
@@ -216,11 +276,13 @@ export default function MedicationAdministrationPage() {
 
       if (patientError) throw patientError;
 
-      if (!record) {
+      if (!patientData) {
         throw new Error(
           "Patient not found or clinic access denied."
         );
       }
+
+      const record = patientData as Patient;
 
       const { data: site, error: siteError } =
         await supabase
@@ -232,31 +294,32 @@ export default function MedicationAdministrationPage() {
       if (siteError) throw siteError;
 
       if (!site?.is_active) {
-        throw new Error("The patient's clinic is inactive.");
+        throw new Error(
+          "The patient's clinic is inactive."
+        );
       }
 
       const { data: records, error: historyError } =
         await supabase
           .from("medication_administrations")
           .select(
-            "id,medication_name,dose,route,administered_at,batch_number,administered_by,next_due_date"
+            "id,service_type,medication_name,dose,route,administered_at,injection_site,batch_number,expiry_date,adverse_events,clinical_notes,next_dose_date,administered_by"
           )
-          .eq("patient_id", patientId)
+          .eq("patient_id", record.id)
           .eq("site_id", record.site_id)
-          .order("administered_at", { ascending: false });
+          .order("administered_at", {
+            ascending: false,
+          });
 
       if (historyError) throw historyError;
 
+      setPatient(record);
       setNurseId(userId);
-      setPatient(record as Patient);
-      setClinicName(site.site_name);
+      setClinicName(site.site_name || "Unknown clinic");
       setHistory((records || []) as Administration[]);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load clinical record."
-      );
+      setPatient(null);
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -266,12 +329,20 @@ export default function MedicationAdministrationPage() {
     void loadData();
   }, [loadData]);
 
-  async function saveAdministration(e: FormEvent) {
+  useEffect(() => {
+    setForm((prev) => ({
+      ...prev,
+      administeredAt: localDateTime(),
+    }));
+  }, []);
+
+  async function saveAdministration(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError("");
-    setMessage("");
 
     if (!patient || !nurseId || saving) return;
+
+    setError("");
+    setMessage("");
 
     const medicationName =
       form.medication.startsWith("Other")
@@ -279,7 +350,17 @@ export default function MedicationAdministrationPage() {
         : form.medication;
 
     if (!medicationName) {
-      setError("Select or enter the medication.");
+      setError("Select or enter a medication.");
+      return;
+    }
+
+    if (!form.dose.trim()) {
+      setError("Enter the administered dose and units.");
+      return;
+    }
+
+    if (!form.batch.trim() || !form.expiry) {
+      setError("Batch number and expiry date are required.");
       return;
     }
 
@@ -289,13 +370,13 @@ export default function MedicationAdministrationPage() {
       !form.consentConfirmed
     ) {
       setError(
-        "Complete all clinical safety confirmations."
+        "Complete all pre-administration safety confirmations."
       );
       return;
     }
 
     if (!form.administeredAt) {
-      setError("Enter the actual administration date and time.");
+      setError("Enter the administration date and time.");
       return;
     }
 
@@ -305,26 +386,25 @@ export default function MedicationAdministrationPage() {
       Number.isNaN(administeredDate.getTime()) ||
       administeredDate.getTime() > Date.now()
     ) {
-      setError("Enter a valid administration time, not in the future.");
+      setError("Administration time cannot be in the future.");
       return;
     }
 
-    const administrationDay =
-      administeredDate.toISOString().slice(0, 10);
+    const administrationDay = form.administeredAt.slice(0, 10);
 
     if (form.expiry < administrationDay) {
       setError(
-        "Medication expiry must not precede administration."
+        "The medication expired before the administration date."
       );
       return;
     }
 
     if (
-      form.nextDueDate &&
-      form.nextDueDate < administrationDay
+      form.nextDoseDate &&
+      form.nextDoseDate < administrationDay
     ) {
       setError(
-        "The next due date cannot precede administration."
+        "The next dose date cannot precede administration."
       );
       return;
     }
@@ -332,66 +412,70 @@ export default function MedicationAdministrationPage() {
     setSaving(true);
 
     try {
-      // Recheck current authentication and clinic assignment.
       const { data: auth, error: authError } =
         await supabase.auth.getUser();
 
       if (authError || auth.user?.id !== nurseId) {
-        throw new Error("Your session has changed. Sign in again.");
+        throw new Error(
+          "Your session has changed. Please sign in again."
+        );
       }
 
-      const { error: insertError } = await supabase
-        .from("medication_administrations")
-        .insert({
-          patient_id: patient.id,
-          site_id: patient.site_id,
-          administered_by: nurseId,
-          medication_category: form.category,
-          medication_name: medicationName,
-          dose: form.dose.trim(),
-          route: form.route,
-          administration_site:
-            form.administrationSite.trim() || null,
-          batch_number: form.batch.trim(),
-          expiry_date: form.expiry,
-          administered_at: administeredDate.toISOString(),
-          allergies_reviewed: form.allergiesReviewed,
-          contraindications_reviewed:
-            form.contraindicationsReviewed,
-          consent_confirmed: form.consentConfirmed,
-          clinical_notes: form.notes.trim() || null,
-          adverse_reaction:
-            form.adverseReaction.trim() || null,
-          next_due_date: form.nextDueDate || null,
-        });
+      const { error: insertError } =
+        await supabase
+          .from("medication_administrations")
+          .insert({
+            patient_id: patient.id,
+            site_id: patient.site_id,
+            administered_by: nurseId,
+            service_type: form.category,
+            medication_name: medicationName,
+            dose: form.dose.trim(),
+            route: form.route,
+            injection_site:
+              form.injectionSite.trim() || null,
+            batch_number: form.batch.trim(),
+            expiry_date: form.expiry,
+            administered_at:
+              administeredDate.toISOString(),
+            allergies_reviewed: form.allergiesReviewed,
+            contraindications_reviewed:
+              form.contraindicationsReviewed,
+            consent_confirmed: form.consentConfirmed,
+            clinical_notes: form.notes.trim() || null,
+            adverse_events:
+              form.adverseEvents.trim() || null,
+            next_dose_date: form.nextDoseDate || null,
+          });
 
       if (insertError) throw insertError;
 
-      setForm(initialForm);
-      setMessage("Medication administration saved successfully.");
+      setForm({
+        ...initialForm,
+        administeredAt: localDateTime(),
+      });
+
       await loadData();
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Medication administration could not be saved."
+
+      setMessage(
+        "Medication administration saved successfully."
       );
+    } catch (err) {
+      setError(getErrorMessage(err));
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) {
-    return <main style={{ padding: 30 }}>Loading clinical record...</main>;
-  }
-
   return (
-    <main style={{
-      background: "#f0f7f7",
-      minHeight: "100vh",
-      padding: "24px 16px",
-      fontFamily: "Arial, sans-serif",
-    }}>
+    <main
+      style={{
+        background: "#f0f7f7",
+        minHeight: "100vh",
+        padding: "24px 16px",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       <div style={{ maxWidth: 920, margin: "0 auto" }}>
         <h1 style={{ color: "#075c59" }}>
           DoseTrack — Medication Administration
@@ -399,18 +483,28 @@ export default function MedicationAdministrationPage() {
 
         <button
           type="button"
-          onClick={() => router.push(
-            `/nurse/patients/${patientId}`
-          )}
-          style={{ ...primaryButton, marginBottom: 20 }}
+          style={{
+            ...buttonStyle,
+            marginBottom: 20,
+          }}
+          onClick={() =>
+            router.push(`/nurse/patients/${patientId}`)
+          }
         >
           Back to Patient Record
         </button>
 
         {error && (
-          <p role="alert" style={{ color: "#b91c1c" }}>
+          <div
+            role="alert"
+            style={{
+              ...cardStyle,
+              color: "#b91c1c",
+              borderColor: "#fecaca",
+            }}
+          >
             {error}
-          </p>
+          </div>
         )}
 
         {message && (
@@ -419,13 +513,29 @@ export default function MedicationAdministrationPage() {
           </p>
         )}
 
-        {patient && (
+        {loading && <p>Loading clinical record...</p>}
+
+        {!loading && !patient && (
+          <button
+            type="button"
+            style={buttonStyle}
+            onClick={() => void loadData()}
+          >
+            Retry
+          </button>
+        )}
+
+        {!loading && patient && (
           <>
             <section style={cardStyle}>
               <h2>
                 {patient.first_name} {patient.surname}
               </h2>
-              <p><strong>Clinic:</strong> {clinicName}</p>
+
+              <p>
+                <strong>Clinic:</strong> {clinicName}
+              </p>
+
               <p>
                 <strong>Date of Birth:</strong>{" "}
                 {patient.date_of_birth || "Not recorded"}
@@ -433,25 +543,29 @@ export default function MedicationAdministrationPage() {
             </section>
 
             <form onSubmit={saveAdministration}>
-              <section style={{
-                ...cardStyle,
-                display: "grid",
-                gap: 18,
-              }}>
+              <section
+                style={{
+                  ...cardStyle,
+                  display: "grid",
+                  gap: 18,
+                }}
+              >
                 <h2>Medication Details</h2>
 
                 <Field label="Service Category *">
                   <select
                     style={inputStyle}
                     value={form.category}
-                    onChange={e => setForm(prev => ({
-                      ...prev,
-                      category: e.target.value,
-                      medication: "",
-                      customMedication: "",
-                    }))}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        category: e.target.value,
+                        medication: "",
+                        customMedication: "",
+                      }))
+                    }
                   >
-                    {categories.map(item => (
+                    {categories.map((item) => (
                       <option
                         key={item.value}
                         value={item.value}
@@ -467,16 +581,21 @@ export default function MedicationAdministrationPage() {
                     required
                     style={inputStyle}
                     value={form.medication}
-                    onChange={e =>
+                    onChange={(e) =>
                       update("medication", e.target.value)
                     }
                   >
-                    <option value="">Select Medication</option>
-                    {medications[form.category].map(name => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
+                    <option value="">
+                      Select medication
+                    </option>
+
+                    {(medications[form.category] || []).map(
+                      (name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      )
+                    )}
                   </select>
                 </Field>
 
@@ -486,9 +605,12 @@ export default function MedicationAdministrationPage() {
                       required
                       style={inputStyle}
                       value={form.customMedication}
-                      onChange={e => update(
-                        "customMedication", e.target.value
-                      )}
+                      onChange={(e) =>
+                        update(
+                          "customMedication",
+                          e.target.value
+                        )
+                      }
                     />
                   </Field>
                 )}
@@ -497,9 +619,9 @@ export default function MedicationAdministrationPage() {
                   <input
                     required
                     style={inputStyle}
-                    placeholder="Enter actual administered dose and units"
+                    placeholder="Actual administered dose and units"
                     value={form.dose}
-                    onChange={e =>
+                    onChange={(e) =>
                       update("dose", e.target.value)
                     }
                   />
@@ -510,7 +632,7 @@ export default function MedicationAdministrationPage() {
                     required
                     style={inputStyle}
                     value={form.route}
-                    onChange={e =>
+                    onChange={(e) =>
                       update("route", e.target.value)
                     }
                   >
@@ -522,14 +644,17 @@ export default function MedicationAdministrationPage() {
                   </select>
                 </Field>
 
-                <Field label="Administration Site">
+                <Field label="Injection / Administration Site">
                   <input
                     style={inputStyle}
                     placeholder="e.g. Left deltoid"
-                    value={form.administrationSite}
-                    onChange={e => update(
-                      "administrationSite", e.target.value
-                    )}
+                    value={form.injectionSite}
+                    onChange={(e) =>
+                      update(
+                        "injectionSite",
+                        e.target.value
+                      )
+                    }
                   />
                 </Field>
 
@@ -538,7 +663,7 @@ export default function MedicationAdministrationPage() {
                     required
                     style={inputStyle}
                     value={form.batch}
-                    onChange={e =>
+                    onChange={(e) =>
                       update("batch", e.target.value)
                     }
                   />
@@ -550,7 +675,7 @@ export default function MedicationAdministrationPage() {
                     required
                     style={inputStyle}
                     value={form.expiry}
-                    onChange={e =>
+                    onChange={(e) =>
                       update("expiry", e.target.value)
                     }
                   />
@@ -562,38 +687,58 @@ export default function MedicationAdministrationPage() {
                     required
                     style={inputStyle}
                     value={form.administeredAt}
-                    onChange={e => update(
-                      "administeredAt", e.target.value
-                    )}
+                    onChange={(e) =>
+                      update(
+                        "administeredAt",
+                        e.target.value
+                      )
+                    }
                   />
                 </Field>
               </section>
 
-              <section style={{
-                ...cardStyle,
-                display: "grid",
-                gap: 16,
-              }}>
+              <section
+                style={{
+                  ...cardStyle,
+                  display: "grid",
+                  gap: 16,
+                }}
+              >
                 <h2>Pre-administration Safety Checks</h2>
+
                 <p>
-                  Confirm the relevant checks have been
-                  completed and documented before recording
-                  an administration.
+                  Confirm the clinical checks were completed
+                  before recording administration.
                 </p>
 
-                {([
-                  ["allergiesReviewed", "Allergies and relevant history reviewed"],
-                  ["contraindicationsReviewed", "Contraindications and clinical eligibility reviewed"],
-                  ["consentConfirmed", "Patient consent confirmed"],
-                ] as const).map(([key, label]) => (
+                {(
+                  [
+                    [
+                      "allergiesReviewed",
+                      "Allergies and relevant history reviewed",
+                    ],
+                    [
+                      "contraindicationsReviewed",
+                      "Contraindications and clinical eligibility reviewed",
+                    ],
+                    [
+                      "consentConfirmed",
+                      "Patient consent confirmed",
+                    ],
+                  ] as const
+                ).map(([key, label]) => (
                   <label
                     key={key}
-                    style={{ display: "flex", gap: 10 }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
                   >
                     <input
                       type="checkbox"
                       checked={form[key]}
-                      onChange={e =>
+                      onChange={(e) =>
                         update(key, e.target.checked)
                       }
                     />
@@ -606,20 +751,23 @@ export default function MedicationAdministrationPage() {
                     rows={4}
                     style={inputStyle}
                     value={form.notes}
-                    onChange={e =>
+                    onChange={(e) =>
                       update("notes", e.target.value)
                     }
                   />
                 </Field>
 
-                <Field label="Adverse Reaction / Observation">
+                <Field label="Adverse Events / Observation">
                   <textarea
                     rows={3}
                     style={inputStyle}
-                    value={form.adverseReaction}
-                    onChange={e => update(
-                      "adverseReaction", e.target.value
-                    )}
+                    value={form.adverseEvents}
+                    onChange={(e) =>
+                      update(
+                        "adverseEvents",
+                        e.target.value
+                      )
+                    }
                   />
                 </Field>
 
@@ -627,10 +775,13 @@ export default function MedicationAdministrationPage() {
                   <input
                     type="date"
                     style={inputStyle}
-                    value={form.nextDueDate}
-                    onChange={e => update(
-                      "nextDueDate", e.target.value
-                    )}
+                    value={form.nextDoseDate}
+                    onChange={(e) =>
+                      update(
+                        "nextDoseDate",
+                        e.target.value
+                      )
+                    }
                   />
                 </Field>
 
@@ -638,7 +789,7 @@ export default function MedicationAdministrationPage() {
                   type="submit"
                   disabled={saving}
                   style={{
-                    ...primaryButton,
+                    ...buttonStyle,
                     opacity: saving ? 0.6 : 1,
                   }}
                 >
@@ -656,27 +807,55 @@ export default function MedicationAdministrationPage() {
                 <p>No administrations recorded yet.</p>
               ) : (
                 <div style={{ display: "grid", gap: 14 }}>
-                  {history.map(item => (
+                  {history.map((item) => (
                     <article
                       key={item.id}
                       style={{
-                        borderBottom: "1px solid #e2e8f0",
+                        borderBottom:
+                          "1px solid #e2e8f0",
                         paddingBottom: 14,
                       }}
                     >
-                      <strong>{item.medication_name}</strong>
+                      <h3>{item.medication_name}</h3>
+
                       <p>
-                        {formatDateTime(item.administered_at)}
+                        <strong>Administered:</strong>{" "}
+                        {formatDateTime(
+                          item.administered_at
+                        )}
                       </p>
+
                       <p>
-                        Dose: {item.dose} | Route: {item.route}
+                        <strong>Dose:</strong> {item.dose}
                       </p>
-                      <p>Batch: {item.batch_number}</p>
+
                       <p>
-                        Next due: {item.next_due_date || "Not set"}
+                        <strong>Route:</strong> {item.route}
                       </p>
+
+                      <p>
+                        <strong>Batch:</strong>{" "}
+                        {item.batch_number || "Not recorded"}
+                      </p>
+
+                      <p>
+                        <strong>Next Due:</strong>{" "}
+                        {item.next_dose_date || "Not set"}
+                      </p>
+
+                      <p>
+                        <strong>Adverse Events:</strong>{" "}
+                        {item.adverse_events || "None documented"}
+                      </p>
+
+                      <p>
+                        <strong>Clinical Notes:</strong>{" "}
+                        {item.clinical_notes || "None"}
+                      </p>
+
                       <small>
-                        Recorded by staff ID: {item.administered_by}
+                        Recorded by staff ID:{" "}
+                        {item.administered_by}
                       </small>
                     </article>
                   ))}
