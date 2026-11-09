@@ -1,698 +1,282 @@
-
 "use client";
 
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useState,
-  type CSSProperties,
-} from "react";
-
-import {
-  useRouter,
-  useSearchParams,
-} from "next/navigation";
-
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Nurse = {
   id: string;
   full_name: string | null;
   email: string | null;
-  approval_status: string;
-  is_active: boolean;
 };
-
-type Site = {
+type Facility = {
   id: string;
-  site_name: string;
-  province: string | null;
+  name: string;
+  mhfl_number: string | null;
+  cfs_number: string | null;
+  demander_number: string | null;
+};
+type Membership = {
+  facility_id: string;
+  user_id: string;
+  role: string;
+  active: boolean;
 };
 
-const inputStyle: CSSProperties = {
-  width: "100%",
-  padding: 12,
-  borderRadius: 8,
-  border: "1px solid #cbd5e1",
-  boxSizing: "border-box",
-  fontSize: 15,
-};
-
-const buttonStyle: CSSProperties = {
-  padding: "14px 20px",
-  background: "#0f766e",
-  color: "white",
-  border: "none",
-  borderRadius: 8,
-  cursor: "pointer",
-  fontWeight: 600,
-  fontSize: 15,
-};
+const NURSE_ROLE = "nurse";
 
 function AssignClinicContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-
   const requestedStaffId = searchParams.get("staffId");
-
   const [nurses, setNurses] = useState<Nurse[]>([]);
-  const [sites, setSites] = useState<Site[]>([]);
-
+  const [facilities, setFacilities] = useState<Facility[]>([]);
   const [nurseId, setNurseId] = useState("");
-
-  const [selectedSites, setSelectedSites] =
-    useState<string[]>([]);
-
-  const [assignedSites, setAssignedSites] =
-    useState<string[]>([]);
-
+  const [selected, setSelected] = useState<string[]>([]);
+  const [saved, setSaved] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [loadingAssignments, setLoadingAssignments] =
-    useState(false);
+  const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-  const [loadError, setLoadError] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const loadPage = useCallback(async () => {
     setLoading(true);
-    setMessage("");
-    setLoadError("");
     setAuthorized(false);
-
+    setError("");
+    setNotice("");
     try {
-      // Step 1: Confirm authentication
-      const { data: auth, error: authError } =
-        await supabase.auth.getUser();
-
+      const { data: auth, error: authError } = await supabase.auth.getUser();
       if (authError || !auth.user) {
         router.replace("/login");
         return;
       }
+      const { data: isAdmin, error: adminError } = await supabase.rpc("dt_is_super_admin");
+      if (adminError) throw adminError;
+      if (isAdmin !== true) throw new Error("Super Admin access required.");
 
-      // Step 2: Verify Super Admin
-      const { data: isAdmin, error: adminError } =
-        await supabase.rpc("dt_is_super_admin");
-
-      if (adminError) {
-        throw adminError;
-      }
-
-      if (isAdmin !== true) {
-        setLoadError("Super Admin access required.");
-        return;
-      }
-
-      // Step 3: Load approved nurses and active sites
-      const [nurseResult, siteResult] =
-        await Promise.all([
-          supabase
-            .from("staff_profiles")
-            .select(
-              "id,full_name,email,approval_status,is_active"
-            )
-            .eq("role", "nurse")
-            .eq("approval_status", "approved")
-            .eq("is_active", true)
-            .order("full_name"),
-
-          supabase
-            .from("sites")
-            .select("id,site_name,province")
-            .eq("is_active", true)
-            .order("site_name"),
-        ]);
-
-      if (nurseResult.error) {
-        throw nurseResult.error;
-      }
-
-      if (siteResult.error) {
-        throw siteResult.error;
-      }
-
-      const nurseList: Nurse[] = nurseResult.data || [];
-      const siteList: Site[] = siteResult.data || [];
-
-      setNurses(nurseList);
-      setSites(siteList);
-
-      // Step 4: Preselect nurse if coming
-      // from Staff Approvals
-      const requestedNurse = nurseList.find(
-        nurse => nurse.id === requestedStaffId
-      );
-
-      if (requestedNurse) {
-        setNurseId(requestedNurse.id);
-      } else if (nurseList.length === 1) {
-        setNurseId(nurseList[0].id);
-      } else {
-        setNurseId("");
-      }
-
-      setAuthorized(true);
-
-      if (siteList.length === 0) {
-        setMessage(
-          "No active clinics found. Add clinics to the sites table in Supabase."
-        );
-      }
-    } catch (error) {
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : "Unable to load clinic assignment page."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [requestedStaffId, router]);
-
-  useEffect(() => {
-    void loadPage();
-  }, [loadPage]);
-
-  // Load the selected nurse's existing assignments
-  useEffect(() => {
-    if (!authorized || !nurseId) {
-      setAssignedSites([]);
-      setSelectedSites([]);
-      setLoadingAssignments(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadAssignments() {
-      setLoadingAssignments(true);
-      setMessage("");
-      setAssignedSites([]);
-      setSelectedSites([]);
-
-      try {
-        const { data, error } = await supabase
-          .from("nurse_site_assignments")
-          .select("site_id")
-          .eq("nurse_id", nurseId);
-
-        if (cancelled) return;
-
-        if (error) throw error;
-
-        const ids = (data || []).map(
-          item => item.site_id
-        );
-
-        setAssignedSites(ids);
-        setSelectedSites(ids);
-      } catch (error) {
-        if (!cancelled) {
-          setMessage(
-            error instanceof Error
-              ? error.message
-              : "Unable to load existing assignments."
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingAssignments(false);
-        }
-      }
-    }
-
-    void loadAssignments();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authorized, nurseId]);
-
-  function toggleSite(siteId: string) {
-    if (saving || loadingAssignments) return;
-
-    setSelectedSites(previous =>
-      previous.includes(siteId)
-        ? previous.filter(id => id !== siteId)
-        : [...previous, siteId]
-    );
-  }
-
-  async function saveAssignments() {
-    if (!authorized || !nurseId) {
-      setMessage("Please select an approved nurse.");
-      return;
-    }
-
-    if (saving || loadingAssignments) return;
-
-    setSaving(true);
-    setMessage("");
-
-    try {
-      // Reconfirm logged-in user
-      const { data: auth, error: authError } =
-        await supabase.auth.getUser();
-
-      if (authError || !auth.user) {
-        router.replace("/login");
-        return;
-      }
-
-      // Recheck Super Admin permission
-      const { data: isAdmin, error: adminError } =
-        await supabase.rpc("dt_is_super_admin");
-
-      if (adminError || isAdmin !== true) {
-        throw new Error(
-          "Super Admin permission is required."
-        );
-      }
-
-      // Confirm nurse is still approved and active
-      const { data: nurse, error: nurseError } =
-        await supabase
-          .from("staff_profiles")
-          .select("id")
-          .eq("id", nurseId)
+      const [staffResult, facilityResult] = await Promise.all([
+        supabase.from("staff_profiles")
+          .select("id,full_name,email")
           .eq("role", "nurse")
           .eq("approval_status", "approved")
           .eq("is_active", true)
-          .maybeSingle();
+          .order("full_name"),
+        supabase.from("fp_facilities")
+          .select("id,name,mhfl_number,cfs_number,demander_number")
+          .order("name"),
+      ]);
+      if (staffResult.error) throw staffResult.error;
+      if (facilityResult.error) throw facilityResult.error;
+      const staff = (staffResult.data ?? []) as Nurse[];
+      setNurses(staff);
+      setFacilities((facilityResult.data ?? []) as Facility[]);
+      setNurseId(previous => {
+        if (requestedStaffId && staff.some(n => n.id === requestedStaffId)) return requestedStaffId;
+        if (previous && staff.some(n => n.id === previous)) return previous;
+        return staff.length === 1 ? staff[0].id : "";
+      });
+      setAuthorized(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load clinic assignments.");
+    } finally {
+      setLoading(false);
+    }
+  }, [router, requestedStaffId]);
 
-      if (nurseError) throw nurseError;
+  useEffect(() => { void loadPage(); }, [loadPage]);
 
-      if (!nurse) {
-        throw new Error(
-          "This nurse is not currently approved and active."
-        );
+  useEffect(() => {
+    if (!authorized || !nurseId) {
+      setSelected([]);
+      setSaved([]);
+      setLoadingAssignments(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingAssignments(true);
+    setError("");
+    setNotice("");
+    setSelected([]);
+    setSaved([]);
+    async function load() {
+      const { data, error: membershipError } = await supabase
+        .from("fp_memberships")
+        .select("facility_id,user_id,role,active")
+        .eq("user_id", nurseId)
+        .eq("role", NURSE_ROLE);
+      if (cancelled) return;
+      if (membershipError) {
+        setError(membershipError.message);
+      } else {
+        const ids = ((data ?? []) as Membership[])
+          .filter(m => m.active)
+          .map(m => m.facility_id);
+        setSaved(ids);
+        setSelected(ids);
       }
+      setLoadingAssignments(false);
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [authorized, nurseId]);
 
-      // Re-read current assignments before writing
-      const { data: current, error: currentError } =
-        await supabase
-          .from("nurse_site_assignments")
-          .select("site_id")
-          .eq("nurse_id", nurseId);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return facilities.filter(f =>
+      !q || [f.name, f.mhfl_number, f.cfs_number, f.demander_number]
+        .some(v => (v ?? "").toLowerCase().includes(q))
+    );
+  }, [facilities, search]);
 
-      if (currentError) throw currentError;
+  async function saveAssignments() {
+    if (!authorized || !nurseId || saving || loadingAssignments) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError || !auth.user) throw new Error("Please sign in again.");
+      const { data: isAdmin, error: adminError } = await supabase.rpc("dt_is_super_admin");
+      if (adminError || isAdmin !== true) throw new Error("Super Admin access required.");
 
-      const currentIds = (current || []).map(
-        item => item.site_id
-      );
+      const { data: staff, error: staffError } = await supabase
+        .from("staff_profiles").select("id")
+        .eq("id", nurseId).eq("role", "nurse")
+        .eq("approval_status", "approved").eq("is_active", true)
+        .maybeSingle();
+      if (staffError) throw staffError;
+      if (!staff) throw new Error("Nurse is not approved and active.");
 
-      const toAdd = selectedSites.filter(
-        id => !currentIds.includes(id)
-      );
-
-      const toRemove = currentIds.filter(
-        id => !selectedSites.includes(id)
-      );
-
-      // Validate selected clinics are still active
-      if (selectedSites.length > 0) {
-        const { data: activeSites, error: siteError } =
-          await supabase
-            .from("sites")
-            .select("id")
-            .in("id", selectedSites)
-            .eq("is_active", true);
-
-        if (siteError) throw siteError;
-
-        if (
-          (activeSites || []).length !==
-          selectedSites.length
-        ) {
-          throw new Error(
-            "One or more selected clinics are no longer active. Refresh the page."
-          );
+      // Check selected facility IDs exist. fp_facilities has no is_active column.
+      if (selected.length) {
+        const { data: valid, error: validError } = await supabase
+          .from("fp_facilities").select("id").in("id", selected);
+        if (validError) throw validError;
+        if ((valid ?? []).length !== selected.length) {
+          throw new Error("One or more clinics no longer exist. Refresh the page.");
         }
       }
 
-      // Add new clinic assignments
-      if (toAdd.length > 0) {
-        const { error: insertError } =
-          await supabase
-            .from("nurse_site_assignments")
-            .upsert(
-              toAdd.map(siteId => ({
-                nurse_id: nurseId,
-                site_id: siteId,
-                assigned_by: auth.user.id,
-              })),
-              {
-                onConflict: "nurse_id,site_id",
-              }
-            );
+      const { data: existing, error: existingError } = await supabase
+        .from("fp_memberships")
+        .select("facility_id,user_id,role,active")
+        .eq("user_id", nurseId).eq("role", NURSE_ROLE);
+      if (existingError) throw existingError;
+      const rows = (existing ?? []) as Membership[];
+      const existingIds = new Set(rows.map(m => m.facility_id));
+      const wantedIds = new Set(selected);
+      const activate = rows.filter(m => wantedIds.has(m.facility_id) && !m.active);
+      const deactivate = rows.filter(m => !wantedIds.has(m.facility_id) && m.active);
+      const create = selected.filter(id => !existingIds.has(id));
 
+      // Uses separate requests: if one fails, reload and reconcile before retrying.
+      for (const m of activate) {
+        const { error: updateError } = await supabase.from("fp_memberships")
+          .update({ active: true })
+          .eq("user_id", nurseId).eq("facility_id", m.facility_id).eq("role", NURSE_ROLE);
+        if (updateError) throw updateError;
+      }
+      for (const facilityId of create) {
+        const { error: insertError } = await supabase.from("fp_memberships")
+          .insert({ user_id: nurseId, facility_id: facilityId, role: NURSE_ROLE, active: true });
         if (insertError) throw insertError;
       }
-
-      // Remove deselected clinics
-      if (toRemove.length > 0) {
-        const { error: deleteError } =
-          await supabase
-            .from("nurse_site_assignments")
-            .delete()
-            .eq("nurse_id", nurseId)
-            .in("site_id", toRemove);
-
-        if (deleteError) throw deleteError;
+      for (const m of deactivate) {
+        const { error: updateError } = await supabase.from("fp_memberships")
+          .update({ active: false })
+          .eq("user_id", nurseId).eq("facility_id", m.facility_id).eq("role", NURSE_ROLE);
+        if (updateError) throw updateError;
       }
-
-      // Refresh saved assignments
-      const { data: refreshed, error: refreshError } =
-        await supabase
-          .from("nurse_site_assignments")
-          .select("site_id")
-          .eq("nurse_id", nurseId);
-
+      const { data: refreshed, error: refreshError } = await supabase
+        .from("fp_memberships").select("facility_id,active")
+        .eq("user_id", nurseId).eq("role", NURSE_ROLE);
       if (refreshError) throw refreshError;
-
-      const savedIds = (refreshed || []).map(
-        item => item.site_id
-      );
-
-      setAssignedSites(savedIds);
-      setSelectedSites(savedIds);
-
-      setMessage(
-        `Clinic assignments saved successfully. ${savedIds.length} clinic(s) assigned.`
-      );
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to save clinic assignments."
-      );
+      const ids = (refreshed ?? []).filter(m => m.active).map(m => m.facility_id);
+      setSaved(ids);
+      setSelected(ids);
+      setNotice(`Saved ${ids.length} active clinic assignment(s).`);
+    } catch (e) {
+      setError((e instanceof Error ? e.message : "Unable to save assignments.") +
+        " If changes were partially saved, refresh before trying again.");
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) {
-    return (
-      <main style={{ padding: 24 }}>
-        Loading clinic assignment page...
-      </main>
-    );
-  }
-
+  if (loading) return <main className="p-6">Loading Family Planning clinic assignments...</main>;
   return (
-    <main
-      style={{
-        maxWidth: 850,
-        margin: "32px auto",
-        padding: 24,
-        background: "#f8fafc",
-        minHeight: "100vh",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <header style={{ marginBottom: 24 }}>
-        <h1 style={{ color: "#075c59" }}>
-          DoseTrack — Assign Clinic
-        </h1>
-
-        <p style={{ color: "#64748b" }}>
-          Super Admin | Nurse Clinic Management
-        </p>
-      </header>
-
-      {loadError && (
-        <p
-          role="alert"
-          style={{
-            padding: 14,
-            background: "#fee2e2",
-            color: "#991b1b",
-            borderRadius: 8,
-          }}
-        >
-          {loadError}
-        </p>
-      )}
-
-      {message && (
-        <p
-          role="status"
-          style={{
-            padding: 14,
-            background: "#e0f2fe",
-            color: "#075985",
-            borderRadius: 8,
-            marginBottom: 20,
-          }}
-        >
-          {message}
-        </p>
-      )}
-
-      {authorized && (
-        <>
-          <section
-            style={{
-              background: "white",
-              padding: 22,
-              borderRadius: 12,
-              marginBottom: 20,
-              border: "1px solid #e2e8f0",
-            }}
-          >
-            <h2>Select Approved Nurse</h2>
-
-            <label
-              htmlFor="nurse"
-              style={{
-                display: "block",
-                marginBottom: 8,
-                fontWeight: 600,
-              }}
-            >
-              Nurse
-            </label>
-
-            <select
-              id="nurse"
-              value={nurseId}
-              onChange={e => {
-                setNurseId(e.target.value);
-                setMessage("");
-              }}
-              style={inputStyle}
+    <main className="min-h-screen bg-slate-50 p-6 text-slate-900">
+      <div className="mx-auto max-w-4xl space-y-6">
+        <header>
+          <h1 className="text-3xl font-bold">DoseTrack — Assign Clinics</h1>
+          <p className="mt-2 text-slate-600">Family Planning | Super Admin</p>
+        </header>
+        {error && <p role="alert" className="rounded-lg bg-red-100 p-4 text-red-800">{error}</p>}
+        {notice && <p role="status" className="rounded-lg bg-teal-100 p-4 text-teal-900">{notice}</p>}
+        {authorized && <>
+          <section className="rounded-xl border bg-white p-5 shadow-sm">
+            <label htmlFor="nurse" className="mb-2 block font-semibold">Approved nurse</label>
+            <select id="nurse" value={nurseId}
+              onChange={e => { setNurseId(e.target.value); setNotice(""); }}
               disabled={saving || loadingAssignments}
-            >
-              <option value="">
-                Select an approved nurse
-              </option>
-
-              {nurses.map(nurse => (
-                <option
-                  key={nurse.id}
-                  value={nurse.id}
-                >
-                  {nurse.full_name || "Unnamed Nurse"}
-                  {nurse.email
-                    ? ` (${nurse.email})`
-                    : ""}
-                </option>
-              ))}
+              className="w-full rounded-lg border p-3">
+              <option value="">Select an approved nurse</option>
+              {nurses.map(n => <option key={n.id} value={n.id}>
+                {n.full_name || "Unnamed nurse"}{n.email ? ` (${n.email})` : ""}
+              </option>)}
             </select>
-
-            {nurses.length === 0 && (
-              <p style={{ color: "#b45309" }}>
-                No approved nurses found.
-                Approve a nurse first.
-              </p>
-            )}
+            {nurses.length === 0 && <p className="mt-3 text-amber-700">No approved active nurses found.</p>}
           </section>
-
-          {nurseId && (
-            <section
-              style={{
-                background: "white",
-                padding: 22,
-                borderRadius: 12,
-                border: "1px solid #e2e8f0",
-              }}
-            >
-              <h2>Assign Clinics</h2>
-
-              <p style={{ color: "#64748b" }}>
-                Select the clinics where this nurse
-                is authorised to provide services.
-              </p>
-
-              {loadingAssignments ? (
-                <p>Loading assigned clinics...</p>
-              ) : (
-                <>
-                  <div
-                    style={{
-                      display: "grid",
-                      gap: 12,
-                      marginTop: 20,
-                    }}
-                  >
-                    {sites.map(site => {
-                      const checked =
-                        selectedSites.includes(site.id);
-
-                      return (
-                        <label
-                          key={site.id}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 12,
-                            padding: 15,
-                            border: checked
-                              ? "1px solid #0f766e"
-                              : "1px solid #e2e8f0",
-                            background: checked
-                              ? "#f0fdfa"
-                              : "white",
-                            borderRadius: 8,
-                            cursor: saving
-                              ? "not-allowed"
-                              : "pointer",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() =>
-                              toggleSite(site.id)
-                            }
-                            disabled={saving}
-                            style={{
-                              width: 18,
-                              height: 18,
-                            }}
-                          />
-
-                          <span>
-                            <strong>
-                              {site.site_name}
-                            </strong>
-
-                            {site.province && (
-                              <span
-                                style={{
-                                  color: "#64748b",
-                                }}
-                              >
-                                {" — "}
-                                {site.province}
-                              </span>
-                            )}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-
-                  {sites.length === 0 && (
-                    <p>
-                      No active clinics available.
-                    </p>
-                  )}
-
-                  <p
-                    style={{
-                      marginTop: 20,
-                      fontWeight: 600,
-                    }}
-                  >
-                    Selected Clinics:{" "}
-                    {selectedSites.length}
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void saveAssignments()
-                    }
-                    disabled={saving}
-                    style={{
-                      ...buttonStyle,
-                      opacity: saving ? 0.6 : 1,
-                    }}
-                  >
-                    {saving
-                      ? "Saving Assignments..."
-                      : "Save Clinic Assignments"}
-                  </button>
-                </>
-              )}
-            </section>
-          )}
-
-          <div
-            style={{
-              display: "flex",
-              gap: 12,
-              flexWrap: "wrap",
-              marginTop: 24,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  "/admin/staff-approvals"
-                )
-              }
-              style={{
-                padding: "12px 18px",
-                borderRadius: 8,
-                border: "1px solid #cbd5e1",
-                background: "white",
-                cursor: "pointer",
-              }}
-            >
-              Back to Staff Approvals
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void loadPage()}
-              style={{
-                padding: "12px 18px",
-                borderRadius: 8,
-                border: "1px solid #cbd5e1",
-                background: "white",
-                cursor: "pointer",
-              }}
-            >
-              Refresh Clinics
-            </button>
+          {nurseId && <section className="rounded-xl border bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold">Assign facilities</h2>
+              <span className="text-sm text-slate-600">{facilities.length} facilities available</span>
+            </div>
+            <label htmlFor="clinic-search" className="mt-4 block text-sm font-medium">Search clinics</label>
+            <input id="clinic-search" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Clinic name, MHFL, CFS or Demander"
+              className="mt-1 w-full rounded-lg border p-3" />
+            {loadingAssignments ? <p className="mt-4">Loading existing assignments...</p> : <>
+              <div className="mt-4 max-h-[440px] space-y-2 overflow-y-auto">
+                {filtered.map(f => <label key={f.id}
+                  className="flex cursor-pointer gap-3 rounded-lg border p-3 hover:bg-teal-50">
+                  <input type="checkbox" className="mt-1 h-4 w-4" checked={selected.includes(f.id)}
+                    disabled={saving || loadingAssignments}
+                    onChange={() => setSelected(previous => previous.includes(f.id)
+                      ? previous.filter(id => id !== f.id) : [...previous, f.id])} />
+                  <span><strong>{f.name}</strong><span className="block text-sm text-slate-600">
+                    {f.mhfl_number ? `MHFL: ${f.mhfl_number}  ` : ""}
+                    {f.cfs_number ? `CFS: ${f.cfs_number}  ` : ""}
+                    {f.demander_number ? `Demander: ${f.demander_number}` : ""}
+                  </span></span>
+                </label>)}
+                {filtered.length === 0 && <p className="text-slate-600">No matching clinics.</p>}
+              </div>
+              <p className="mt-4 font-semibold">Selected: {selected.length} | Saved: {saved.length}</p>
+              <button type="button" onClick={() => void saveAssignments()}
+                disabled={saving || loadingAssignments || facilities.length === 0}
+                className="mt-4 rounded-lg bg-teal-700 px-5 py-3 font-semibold text-white disabled:opacity-50">
+                {saving ? "Saving..." : "Save Clinic Assignments"}
+              </button>
+            </>}
+          </section>}
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={() => router.push("/admin/staff-approvals")}
+              className="rounded-lg border bg-white px-4 py-3">Staff Approvals</button>
+            <button type="button" onClick={() => void loadPage()} disabled={saving}
+              className="rounded-lg border bg-white px-4 py-3 disabled:opacity-50">Refresh</button>
           </div>
-        </>
-      )}
+        </>}
+      </div>
     </main>
   );
 }
 
-// Suspense fixes the Next.js useSearchParams
-// prerendering error during production builds.
 export default function AssignClinicPage() {
-  return (
-    <Suspense
-      fallback={
-        <main
-          style={{
-            padding: 24,
-            fontFamily: "Arial, sans-serif",
-          }}
-        >
-          Loading clinic assignment page...
-        </main>
-      }
-    >
-      <AssignClinicContent />
-    </Suspense>
-  );
+  return <Suspense fallback={<main className="p-6">Loading clinic assignments...</main>}>
+    <AssignClinicContent />
+  </Suspense>;
 }
