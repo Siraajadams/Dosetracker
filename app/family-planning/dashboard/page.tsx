@@ -24,7 +24,66 @@ type Module = {
   icon: string;
 };
 
+
 const modules: Module[] = [
+  {
+    title: "Patient Management",
+    description:
+      "Review and update patients registered across different facilities.",
+    href: "/family-planning/patients",
+    icon: "👥",
+  },
+  {
+    title: "Contraceptive Analytics",
+    description:
+      "Monitor medication administrations, top 10 medications and adverse events.",
+    href: "/family-planning/medications",
+    icon: "💉",
+  },
+  {
+    title: "Follow-up Appointments",
+    description:
+      "Manage appointment calendars, follow-ups and adherence.",
+    href: "/family-planning/appointments",
+    icon: "📅",
+  },
+  {
+    title: "Inventory Management",
+    description:
+      "Review stock on hand, reorders and monthly inventory by facility.",
+    href: "/family-planning/inventory",
+    icon: "📦",
+  },
+  {
+    title: "Clinical Reports",
+    description:
+      "View monthly facility reports, medication activity and stock usage.",
+    href: "/family-planning/reports",
+    icon: "📊",
+  },
+  {
+    title: "Nurse Administration",
+    description:
+      "Review nurse registrations, approve staff and assign nurses to clinics.",
+    href: "/admin/nurses",
+    icon: "👩‍⚕️",
+  },
+  {
+    title: "Manage Clinics",
+    description:
+      "Manage facility profiles, MHFL, CFS and Demander numbers.",
+    href: "/admin/clinics",
+    icon: "🏥",
+  },
+  {
+    title: "Medication Management",
+    description:
+      "Manage contraceptive medication master data and product details.",
+    href: "/admin/medications",
+    icon: "💊",
+  },
+];
+
   {
     title: "Patient Registration",
     description:
