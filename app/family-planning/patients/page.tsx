@@ -22,16 +22,20 @@ function field(
 ): string {
   for (const key of keys) {
     const value = record[key];
+
     if (value !== null && value !== undefined && value !== "") {
       return String(value);
     }
   }
+
   return "";
 }
 
-function formatDate(value: string) {
+function formatDate(value: string): string {
   if (!value) return "—";
+
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+
   return match
     ? `${match[3]}/${match[2]}/${match[1]}`
     : value;
@@ -45,15 +49,18 @@ export default function FamilyPlanningPatientsPage() {
   const [facilityId, setFacilityId] = useState("");
   const [search, setSearch] = useState("");
   const [genderFilter, setGenderFilter] = useState("All");
+
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Verify login and active clinic assignments.
   useEffect(() => {
     let cancelled = false;
 
     async function checkAccess() {
       setLoading(true);
+      setError("");
 
       const { data: auth, error: authError } =
         await supabase.auth.getUser();
@@ -101,6 +108,7 @@ export default function FamilyPlanningPatientsPage() {
     };
   }, [router]);
 
+  // Load patients for the selected clinic.
   const loadPatients = useCallback(async () => {
     if (!facilityId) return;
 
@@ -108,36 +116,43 @@ export default function FamilyPlanningPatientsPage() {
     setError("");
     setPatients([]);
 
-    const { data, error: queryError } = await supabase
-      .from("fp_patients")
-      .select("*")
-      .eq("facility_id", facilityId)
-      .limit(500);
+    try {
+      const { data, error: queryError } = await supabase
+        .from("fp_patients")
+        .select("*")
+        .eq("facility_id", facilityId)
+        .limit(500);
 
-    if (queryError) {
-      setError(queryError.message);
-    } else {
-      setPatients((data || []) as Patient[]);
+      if (queryError) {
+        throw new Error(queryError.message);
+      }
+
+      setPatients((data ?? []) as unknown as Patient[]);
+    } catch (err) {
+      setPatients([]);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load patients."
+      );
+    } finally {
+      setBusy(false);
     }
-
-    setBusy(false);
   }, [facilityId]);
 
   useEffect(() => {
     void loadPatients();
   }, [loadPatients]);
 
-  const genders = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          patients
-            .map((p) => field(p, "gender", "sex"))
-            .filter(Boolean)
-        )
-      ).sort(),
-    [patients]
-  );
+  const genders = useMemo(() => {
+    return Array.from(
+      new Set(
+        patients
+          .map((patient) => field(patient, "gender", "sex"))
+          .filter(Boolean)
+      )
+    ).sort();
+  }, [patients]);
 
   const filteredPatients = useMemo(() => {
     return patients.filter((patient) => {
@@ -156,6 +171,7 @@ export default function FamilyPlanningPatientsPage() {
       );
 
       const gender = field(patient, "gender", "sex");
+
       const matchesGender =
         genderFilter === "All" || gender === genderFilter;
 
@@ -163,12 +179,12 @@ export default function FamilyPlanningPatientsPage() {
     });
   }, [patients, search, genderFilter]);
 
-  const withContact = patients.filter(
-    (p) => field(p, "mobile_number", "contact_number")
+  const withContact = patients.filter((patient) =>
+    field(patient, "mobile_number", "contact_number")
   ).length;
 
-  const withDOB = patients.filter(
-    (p) => field(p, "date_of_birth", "dob")
+  const withDOB = patients.filter((patient) =>
+    field(patient, "date_of_birth", "dob")
   ).length;
 
   if (loading) {
@@ -185,6 +201,7 @@ export default function FamilyPlanningPatientsPage() {
         <h1 className="text-3xl font-bold">
           Family Planning — Patients
         </h1>
+
         <p className="mt-2 text-gray-600">
           Manage patient registrations, search records and review
           clinical history.
@@ -266,6 +283,7 @@ export default function FamilyPlanningPatientsPage() {
               >
                 Search patient
               </label>
+
               <input
                 id="patient-search"
                 type="search"
@@ -285,6 +303,7 @@ export default function FamilyPlanningPatientsPage() {
               >
                 Gender
               </label>
+
               <select
                 id="gender-filter"
                 value={genderFilter}
@@ -294,6 +313,7 @@ export default function FamilyPlanningPatientsPage() {
                 className="w-full rounded border p-3"
               >
                 <option value="All">All genders</option>
+
                 {genders.map((gender) => (
                   <option key={gender} value={gender}>
                     {gender}
@@ -309,6 +329,7 @@ export default function FamilyPlanningPatientsPage() {
               >
                 Assigned clinic
               </label>
+
               <select
                 id="facility"
                 value={facilityId}
@@ -332,8 +353,9 @@ export default function FamilyPlanningPatientsPage() {
           </div>
 
           <div className="mb-4 text-sm text-gray-600">
-            Showing {filteredPatients.length} of{" "}
-            {patients.length} loaded patients
+            {busy
+              ? "Loading patients..."
+              : `Showing ${filteredPatients.length} of ${patients.length} loaded patients`}
           </div>
 
           <div className="overflow-x-auto rounded border">
@@ -356,6 +378,7 @@ export default function FamilyPlanningPatientsPage() {
                     "first_name",
                     "name"
                   );
+
                   const surname = field(
                     patient,
                     "surname",
@@ -383,9 +406,59 @@ export default function FamilyPlanningPatientsPage() {
 
                       <td className="p-3">
                         {formatDate(
-                          field(patient, "date_of_birth", "dob")
+                          field(
+                            patient,
+                            "date_of_birth",
+                            "dob"
+                          )
                         )}
                       </td>
 
                       <td className="p-3">
-                        {field(patient
+                        {field(
+                          patient,
+                          "gender",
+                          "sex"
+                        ) || "—"}
+                      </td>
+
+                      <td className="p-3">
+                        {field(
+                          patient,
+                          "mobile_number",
+                          "contact_number"
+                        ) || "—"}
+                      </td>
+
+                      <td className="p-3">
+                        <Link
+                          href={`/nurse/patients/${encodeURIComponent(
+                            patient.id
+                          )}`}
+                          className="font-medium text-blue-700 underline"
+                        >
+                          View history
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {!busy && filteredPatients.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="p-6 text-center text-gray-500"
+                    >
+                      No matching patients found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </main>
+  );
+}
