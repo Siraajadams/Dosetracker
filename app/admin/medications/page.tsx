@@ -71,27 +71,35 @@ export default function FamilyPlanningMedicationsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
 
-  const loadMedications = useCallback(async () => {
-    setBusy(true);
-    setError("");
+  
+const loadMedications = useCallback(async () => {
+  setBusy(true);
+  setError("");
 
+  try {
     const { data, error: queryError } = await supabase
       .from("fp_medication_catalogue")
-      .select(
-        "id,icn_code,medication_name,generic_name,category," +
-        "dosage_form,strength,stock_unit,administration_route," +
-        "is_government_stock,is_active"
-      )
+      .select("*")
       .order("medication_name");
 
     if (queryError) {
-      setError(queryError.message);
-    } else {
-      setMedications((data || []) as Medication[]);
+      throw new Error(queryError.message);
     }
 
+    const records = (data ?? []) as unknown as Medication[];
+    setMedications(records);
+  } catch (err) {
+    setMedications([]);
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Unable to load medications."
+    );
+  } finally {
     setBusy(false);
-  }, []);
+  }
+}, []);
+
 
   useEffect(() => {
     let cancelled = false;
