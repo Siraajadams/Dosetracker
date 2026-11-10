@@ -18,11 +18,9 @@ type Medication = {
   administration_route: string | null;
   is_government_stock: boolean;
   is_active: boolean;
-  created_at: string;
-  updated_at: string;
 };
 
-type MedicationForm = {
+type FormData = {
   icn_code: string;
   medication_name: string;
   generic_name: string;
@@ -35,17 +33,7 @@ type MedicationForm = {
   is_active: boolean;
 };
 
-const categories = [
-  "Injectable",
-  "Oral contraceptive",
-  "Implant",
-  "Intrauterine device",
-  "Emergency contraception",
-  "Barrier method",
-  "Other",
-];
-
-const emptyForm: MedicationForm = {
+const emptyForm: FormData = {
   icn_code: "",
   medication_name: "",
   generic_name: "",
@@ -58,40 +46,51 @@ const emptyForm: MedicationForm = {
   is_active: true,
 };
 
-const inputClass = "w-full rounded-lg border p-3";
+const categories = [
+  "Injectable",
+  "Oral contraceptive",
+  "Implant",
+  "Intrauterine device",
+  "Emergency contraception",
+  "Barrier method",
+  "Other",
+];
 
-export default function AdminMedicationsPage() {
+export default function FamilyPlanningMedicationsPage() {
   const router = useRouter();
 
   const [checking, setChecking] = useState(true);
   const [authorized, setAuthorized] = useState(false);
   const [medications, setMedications] = useState<Medication[]>([]);
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("All");
-  const [statusFilter, setStatusFilter] = useState("All");
-
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<MedicationForm>(emptyForm);
-
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<FormData>(emptyForm);
 
   const loadMedications = useCallback(async () => {
+    setBusy(true);
     setError("");
 
     const { data, error: queryError } = await supabase
       .from("fp_medication_catalogue")
-      .select("*")
+      .select(
+        "id,icn_code,medication_name,generic_name,category," +
+        "dosage_form,strength,stock_unit,administration_route," +
+        "is_government_stock,is_active"
+      )
       .order("medication_name");
 
     if (queryError) {
       setError(queryError.message);
-      return;
+    } else {
+      setMedications((data || []) as Medication[]);
     }
 
-    setMedications((data || []) as Medication[]);
+    setBusy(false);
   }, []);
 
   useEffect(() => {
@@ -114,7 +113,7 @@ export default function AdminMedicationsPage() {
       if (cancelled) return;
 
       if (roleError || data !== true) {
-        setError("Access denied. Super Admin required.");
+        setError("Super Admin access required.");
         setChecking(false);
         return;
       }
@@ -134,9 +133,9 @@ export default function AdminMedicationsPage() {
     if (authorized) void loadMedications();
   }, [authorized, loadMedications]);
 
-  function updateForm<K extends keyof MedicationForm>(
+  function updateField<K extends keyof FormData>(
     key: K,
-    value: MedicationForm[K]
+    value: FormData[K]
   ) {
     setForm((previous) => ({
       ...previous,
@@ -144,15 +143,15 @@ export default function AdminMedicationsPage() {
     }));
   }
 
-  function startAdd() {
+  function addMedication() {
     setEditingId(null);
     setForm({ ...emptyForm });
     setShowForm(true);
-    setError("");
     setMessage("");
+    setError("");
   }
 
-  function startEdit(med: Medication) {
+  function editMedication(med: Medication) {
     setEditingId(med.id);
     setForm({
       icn_code: med.icn_code || "",
@@ -167,25 +166,8 @@ export default function AdminMedicationsPage() {
       is_active: med.is_active,
     });
     setShowForm(true);
-    setError("");
     setMessage("");
-  }
-
-  function buildPayload(values: MedicationForm) {
-    return {
-      icn_code: values.icn_code.trim() || null,
-      medication_name: values.medication_name.trim(),
-      generic_name: values.generic_name.trim() || null,
-      category: values.category.trim(),
-      dosage_form: values.dosage_form.trim() || null,
-      strength: values.strength.trim() || null,
-      stock_unit: values.stock_unit.trim(),
-      administration_route:
-        values.administration_route.trim() || null,
-      is_government_stock: values.is_government_stock,
-      is_active: values.is_active,
-      updated_at: new Date().toISOString(),
-    };
+    setError("");
   }
 
   async function saveMedication() {
@@ -194,15 +176,28 @@ export default function AdminMedicationsPage() {
       !form.category.trim() ||
       !form.stock_unit.trim()
     ) {
-      setError("Name, category and stock unit are required.");
+      setError("Medication name, category and stock unit are required.");
       return;
     }
 
-    setBusy(true);
+    setSaving(true);
     setError("");
     setMessage("");
 
-    const payload = buildPayload(form);
+    const payload = {
+      icn_code: form.icn_code.trim() || null,
+      medication_name: form.medication_name.trim(),
+      generic_name: form.generic_name.trim() || null,
+      category: form.category.trim(),
+      dosage_form: form.dosage_form.trim() || null,
+      strength: form.strength.trim() || null,
+      stock_unit: form.stock_unit.trim(),
+      administration_route:
+        form.administration_route.trim() || null,
+      is_government_stock: form.is_government_stock,
+      is_active: form.is_active,
+      updated_at: new Date().toISOString(),
+    };
 
     const result = editingId
       ? await supabase
@@ -226,15 +221,15 @@ export default function AdminMedicationsPage() {
       await loadMedications();
     }
 
-    setBusy(false);
+    setSaving(false);
   }
 
-  async function toggleActive(med: Medication) {
+  async function toggleMedication(med: Medication) {
     setBusy(true);
     setError("");
     setMessage("");
 
-    const { data, error: updateError } = await supabase
+    const { error: updateError } = await supabase
       .from("fp_medication_catalogue")
       .update({
         is_active: !med.is_active,
@@ -244,10 +239,8 @@ export default function AdminMedicationsPage() {
       .select("id")
       .single();
 
-    if (updateError || !data) {
-      setError(
-        updateError?.message || "Unable to update medication."
-      );
+    if (updateError) {
+      setError(updateError.message);
     } else {
       setMessage("Medication status updated.");
       await loadMedications();
@@ -256,37 +249,17 @@ export default function AdminMedicationsPage() {
     setBusy(false);
   }
 
-  const existingCategories = Array.from(
-    new Set([
-      ...categories,
-      ...medications.map((m) => m.category),
-    ])
-  ).sort();
-
   const filtered = medications.filter((med) => {
-    const query = search.trim().toLowerCase();
-
-    const matchesSearch = [
+    const searchable = [
       med.medication_name,
       med.generic_name,
       med.icn_code,
       med.category,
-      med.strength,
     ]
       .join(" ")
-      .toLowerCase()
-      .includes(query);
+      .toLowerCase();
 
-    const matchesCategory =
-      categoryFilter === "All" ||
-      med.category === categoryFilter;
-
-    const matchesStatus =
-      statusFilter === "All" ||
-      (statusFilter === "Active" && med.is_active) ||
-      (statusFilter === "Inactive" && !med.is_active);
-
-    return matchesSearch && matchesCategory && matchesStatus;
+    return searchable.includes(search.trim().toLowerCase());
   });
 
   if (checking) {
@@ -306,108 +279,65 @@ export default function AdminMedicationsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl p-6">
+    <main className="mx-auto max-w-6xl p-6">
       <header className="mb-6">
         <h1 className="text-3xl font-bold">
-          Family Planning — Medication Catalogue
+          Family Planning — Medications
         </h1>
         <p className="mt-2 text-gray-600">
-          Manage contraceptives, stock classifications and
-          medication availability.
+          Search medications and manage the family planning
+          medication catalogue.
         </p>
       </header>
 
       <div className="mb-6 flex flex-wrap gap-3">
-        <Link href="/admin" className="rounded border px-4 py-2">
-          Admin Dashboard
+        <Link
+          href="/family-planning/dashboard"
+          className="rounded border px-4 py-2"
+        >
+          Dashboard
         </Link>
 
         <button
-          onClick={startAdd}
+          type="button"
+          onClick={() => void loadMedications()}
+          disabled={busy}
+          className="rounded border px-4 py-2 disabled:opacity-50"
+        >
+          {busy ? "Refreshing..." : "Refresh medications"}
+        </button>
+
+        <button
+          type="button"
+          onClick={addMedication}
           className="rounded bg-blue-700 px-4 py-2 text-white"
         >
           + Add Medication
         </button>
-
-        <button
-          disabled={busy}
-          onClick={() => void loadMedications()}
-          className="rounded border px-4 py-2"
-        >
-          Refresh
-        </button>
-      </div>
-
-      <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <div className="rounded border p-4">
-          <p className="text-sm text-gray-500">Total medications</p>
-          <p className="text-2xl font-bold">{medications.length}</p>
-        </div>
-        <div className="rounded border p-4">
-          <p className="text-sm text-gray-500">Active</p>
-          <p className="text-2xl font-bold">
-            {medications.filter((m) => m.is_active).length}
-          </p>
-        </div>
-        <div className="rounded border p-4">
-          <p className="text-sm text-gray-500">
-            Government stock
-          </p>
-          <p className="text-2xl font-bold">
-            {medications.filter((m) => m.is_government_stock).length}
-          </p>
-        </div>
       </div>
 
       {error && (
-        <div role="alert" className="mb-4 rounded bg-red-50 p-4 text-red-700">
+        <div
+          role="alert"
+          className="mb-5 rounded border border-red-300 bg-red-50 p-4 text-red-800"
+        >
           {error}
         </div>
       )}
 
       {message && (
-        <div role="status" className="mb-4 rounded bg-green-50 p-4 text-green-800">
+        <div
+          role="status"
+          className="mb-5 rounded border p-4"
+        >
           {message}
         </div>
       )}
 
-      <div className="mb-6 grid gap-3 md:grid-cols-3">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search medication, generic name or ICN..."
-          className={inputClass}
-        />
-
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className={inputClass}
-        >
-          <option value="All">All categories</option>
-          {existingCategories.map((category) => (
-            <option key={category} value={category}>
-              {category}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className={inputClass}
-        >
-          <option value="All">All statuses</option>
-          <option value="Active">Active</option>
-          <option value="Inactive">Inactive</option>
-        </select>
-      </div>
-
       {showForm && (
-        <section className="mb-6 rounded-lg border p-5">
+        <section className="mb-6 rounded border p-5">
           <h2 className="mb-4 text-xl font-semibold">
-            {editingId ? "Edit Medication" : "Add Medication"}
+            {editingId ? "Edit Medication" : "Register Medication"}
           </h2>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -429,9 +359,9 @@ export default function AdminMedicationsPage() {
                 <input
                   value={form[key]}
                   onChange={(e) =>
-                    updateForm(key, e.target.value)
+                    updateField(key, e.target.value)
                   }
-                  className={inputClass}
+                  className="w-full rounded border p-3"
                 />
               </label>
             ))}
@@ -443,11 +373,16 @@ export default function AdminMedicationsPage() {
               <select
                 value={form.category}
                 onChange={(e) =>
-                  updateForm("category", e.target.value)
+                  updateField("category", e.target.value)
                 }
-                className={inputClass}
+                className="w-full rounded border p-3"
               >
-                {existingCategories.map((category) => (
+                {Array.from(
+                  new Set([
+                    ...categories,
+                    ...medications.map((m) => m.category),
+                  ])
+                ).map((category) => (
                   <option key={category} value={category}>
                     {category}
                   </option>
@@ -460,7 +395,7 @@ export default function AdminMedicationsPage() {
                 type="checkbox"
                 checked={form.is_government_stock}
                 onChange={(e) =>
-                  updateForm(
+                  updateField(
                     "is_government_stock",
                     e.target.checked
                   )
@@ -474,24 +409,26 @@ export default function AdminMedicationsPage() {
                 type="checkbox"
                 checked={form.is_active}
                 onChange={(e) =>
-                  updateForm("is_active", e.target.checked)
+                  updateField("is_active", e.target.checked)
                 }
               />
               Active medication
             </label>
           </div>
 
-          <div className="mt-6 flex gap-3">
+          <div className="mt-5 flex gap-3">
             <button
-              disabled={busy}
+              type="button"
+              disabled={saving}
               onClick={() => void saveMedication()}
               className="rounded bg-blue-700 px-5 py-2 text-white disabled:opacity-50"
             >
-              {busy ? "Saving..." : "Save Medication"}
+              {saving ? "Saving..." : "Save Medication"}
             </button>
 
             <button
-              disabled={busy}
+              type="button"
+              disabled={saving}
               onClick={() => setShowForm(false)}
               className="rounded border px-5 py-2"
             >
@@ -501,68 +438,99 @@ export default function AdminMedicationsPage() {
         </section>
       )}
 
-      <p className="mb-3 text-sm text-gray-600">
-        Showing {filtered.length} medication records
-      </p>
+      <div className="mb-5">
+        <label
+          htmlFor="medication-search"
+          className="mb-2 block font-medium"
+        >
+          Search medication
+        </label>
+
+        <input
+          id="medication-search"
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Name, generic name or ICN code"
+          className="w-full rounded border p-3"
+        />
+      </div>
+
+      <div className="mb-4 text-sm text-gray-600">
+        Showing {filtered.length} of {medications.length} loaded medications
+      </div>
 
       <div className="overflow-x-auto rounded border">
-        <table className="w-full text-left text-sm">
+        <table className="w-full border-collapse text-left">
           <thead className="bg-gray-100">
             <tr>
-              <th className="p-3">ICN</th>
               <th className="p-3">Medication</th>
-              <th className="p-3">Generic</th>
+              <th className="p-3">ICN</th>
               <th className="p-3">Category</th>
               <th className="p-3">Strength</th>
-              <th className="p-3">Stock unit</th>
-              <th className="p-3">Government</th>
               <th className="p-3">Status</th>
-              <th className="p-3">Actions</th>
+              <th className="p-3">Action</th>
             </tr>
           </thead>
+
           <tbody>
             {filtered.map((med) => (
               <tr key={med.id} className="border-t">
-                <td className="p-3">{med.icn_code || "—"}</td>
-                <td className="p-3 font-medium">
-                  {med.medication_name}
-                </td>
                 <td className="p-3">
-                  {med.generic_name || "—"}
+                  <div className="font-medium">
+                    {med.medication_name}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {med.generic_name || ""}
+                  </div>
                 </td>
+
+                <td className="p-3">
+                  {med.icn_code || "—"}
+                </td>
+
                 <td className="p-3">{med.category}</td>
-                <td className="p-3">{med.strength || "—"}</td>
-                <td className="p-3">{med.stock_unit}</td>
+
                 <td className="p-3">
-                  {med.is_government_stock ? "Yes" : "No"}
+                  {med.strength || "—"}
                 </td>
+
                 <td className="p-3">
                   {med.is_active ? "Active" : "Inactive"}
                 </td>
+
                 <td className="p-3">
-                  <div className="flex gap-3">
+                  <div className="flex flex-wrap gap-3">
                     <button
-                      onClick={() => startEdit(med)}
-                      className="text-blue-700 underline"
+                      type="button"
+                      onClick={() => editMedication(med)}
+                      className="font-medium text-blue-700 underline"
                     >
                       Edit
                     </button>
+
                     <button
+                      type="button"
                       disabled={busy}
-                      onClick={() => void toggleActive(med)}
-                      className="underline disabled:opacity-50"
+                      onClick={() => void toggleMedication(med)}
+                      className="text-blue-700 underline disabled:opacity-50"
                     >
-                      {med.is_active ? "Deactivate" : "Activate"}
+                      {med.is_active
+                        ? "Deactivate"
+                        : "Activate"}
                     </button>
                   </div>
                 </td>
               </tr>
             ))}
 
-            {filtered.length === 0 && (
+            {!busy && filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="p-6 text-center">
-                  No medications found.
+                <td
+                  colSpan={6}
+                  className="p-6 text-center text-gray-500"
+                >
+                  No matching medications found.
                 </td>
               </tr>
             )}
