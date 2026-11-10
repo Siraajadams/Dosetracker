@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -84,40 +83,19 @@ const modules: Module[] = [
   },
 ];
 
+
+const nurseModules: Module[] = [
   {
     title: "Patient Registration",
-    description:
-      "Register new patients, capture identification details and maintain patient profiles.",
+    description: "Register new patients and maintain patient profiles.",
     href: "/nurse/patients/new",
     icon: "👤",
   },
   {
     title: "Contraceptive Administration",
-    description:
-      "Search for patients and record contraceptive medication administrations.",
+    description: "Find patients and record contraceptive administrations.",
     href: "/nurse/patients",
     icon: "💉",
-  },
-  {
-    title: "Follow-up Appointments",
-    description:
-      "Access patient records to review follow-up dates and contraceptive schedules.",
-    href: "/nurse/patients",
-    icon: "📅",
-  },
-  {
-    title: "Inventory Management",
-    description:
-      "Access the contraceptive inventory management module.",
-    href: "/family-planning/inventory",
-    icon: "📦",
-  },
-  {
-    title: "Clinical Reports",
-    description:
-      "Access facility-level family planning activity and reporting.",
-    href: "/family-planning/reports",
-    icon: "📊",
   },
 ];
 
@@ -400,7 +378,7 @@ export default function FamilyPlanningDashboard() {
 
               {isSuperAdmin && (
                 <Link
-                  href="/admin"
+                  href="/admin/nurses"
                   style={button}
                 >
                   Open Super Admin Dashboard
@@ -414,7 +392,7 @@ export default function FamilyPlanningDashboard() {
                 marginBottom: 18,
               }}
             >
-              Clinical Modules
+              {isSuperAdmin ? "Management Modules" : "Clinical Modules"}
             </h2>
 
             <div
@@ -425,7 +403,7 @@ export default function FamilyPlanningDashboard() {
                 gap: 18,
               }}
             >
-              {modules.map((module) => (
+              {(isSuperAdmin ? modules : nurseModules).map((module) => (
                 <section
                   key={module.title}
                   style={card}
@@ -467,41 +445,7 @@ export default function FamilyPlanningDashboard() {
                 </section>
               ))}
 
-              {isSuperAdmin && (
-                <section style={card}>
-                  <div
-                    style={{
-                      fontSize: 34,
-                      marginBottom: 12,
-                    }}
-                  >
-                    🛡️
-                  </div>
 
-                  <h3 style={{ color: "#0f766e" }}>
-                    Staff Administration
-                  </h3>
-
-                  <p
-                    style={{
-                      color: "#475569",
-                      lineHeight: 1.6,
-                      minHeight: 75,
-                    }}
-                  >
-                    Approve nurse registrations,
-                    manage facilities and assign
-                    staff to clinics.
-                  </p>
-
-                  <Link
-                    href="/admin"
-                    style={button}
-                  >
-                    Open Administration →
-                  </Link>
-                </section>
-              )}
             </div>
           </>
         )}
