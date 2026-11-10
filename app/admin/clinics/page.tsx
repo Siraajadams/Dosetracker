@@ -157,77 +157,101 @@ export default function AdminClinicsPage() {
     }
   }
 
-  if (loading) return <main className="p-6">Loading Family Planning clinics...</main>;
+  const complete = facilities.filter(f => f.mhfl_number && f.cfs_number && f.demander_number).length;
+  const missing = facilities.length - complete;
+  const inputClass = "mt-2 block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600 focus:ring-2 focus:ring-teal-100";
+
+  if (loading) return (
+    <main className="min-h-screen bg-slate-50 px-6 py-16 text-center text-slate-600" role="status">
+      Loading clinic directory…
+    </main>
+  );
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6 text-slate-900">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold">DoseTrack — Manage Clinics</h1>
-            <p className="mt-2 text-slate-600">Family Planning | Super Admin clinic master data</p>
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-4 md:px-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-700 text-lg font-bold text-white">D</div>
+            <div><p className="font-bold tracking-tight text-slate-900">DoseTrack</p><p className="text-xs text-slate-500">Family Planning · Administration</p></div>
           </div>
-          <Link href="/admin" className="rounded-lg border bg-white px-4 py-2">Admin Dashboard</Link>
-        </header>
-        {error && <p role="alert" className="rounded-lg bg-red-100 p-4 text-red-800">{error}</p>}
-        {notice && <p role="status" className="rounded-lg bg-teal-100 p-4 text-teal-900">{notice}</p>}
+          <div className="flex flex-wrap gap-2">
+            <Link href="/family-planning/dashboard" className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">← Dashboard</Link>
+            <Link href="/admin/assign-clinic" className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Nurse Assignments</Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-7xl space-y-7 px-5 py-8 md:px-8">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div><p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-teal-700">Facility master data</p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">Manage Clinics</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Maintain clinic identifiers and contact details across your Family Planning network.</p>
+          </div>
+          {authorized && <button type="button" onClick={create} disabled={saving} className="rounded-xl bg-teal-700 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-teal-800 disabled:opacity-50">+ Add Clinic</button>}
+        </div>
+
+        {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800">{error}</div>}
+        {notice && <div role="status" className="rounded-xl border border-teal-200 bg-teal-50 px-5 py-4 text-sm text-teal-900">{notice}</div>}
+
         {authorized && <>
-          <section className="rounded-xl border bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold">Clinic directory</h2>
-                <p className="text-sm text-slate-600">{facilities.length} clinics in the database</p>
-              </div>
-              <button type="button" onClick={create} disabled={saving} className="rounded-lg bg-teal-700 px-4 py-2 font-semibold text-white disabled:opacity-50">Add Clinic</button>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {[
+              { label: "Total clinics", value: facilities.length, note: "Registered facilities" },
+              { label: "Complete identifiers", value: complete, note: "MHFL, CFS & Demander recorded" },
+              { label: "Needs attention", value: missing, note: "One or more identifiers missing" },
+            ].map(stat => <div key={stat.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm font-medium text-slate-500">{stat.label}</p><p className="mt-3 text-3xl font-bold tracking-tight text-slate-900">{stat.value}</p><p className="mt-2 text-xs text-slate-500">{stat.note}</p>
+            </div>)}
+          </div>
+
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 px-5 py-5 md:px-6">
+              <div><h2 className="text-lg font-bold text-slate-900">Clinic directory</h2><p className="mt-1 text-sm text-slate-500">{filtered.length} of {facilities.length} clinics shown</p></div>
+              <button type="button" onClick={() => void load()} disabled={saving} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">Refresh list</button>
             </div>
-            <label htmlFor="clinic-search" className="mt-5 block text-sm font-medium">Search clinics</label>
-            <input id="clinic-search" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Name, MHFL, CFS, Demander, email or telephone"
-              className="mt-1 w-full rounded-lg border p-3" />
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[850px] text-left text-sm">
-                <thead className="bg-slate-100"><tr>
-                  <th className="p-3">Clinic</th><th className="p-3">MHFL</th><th className="p-3">CFS</th>
-                  <th className="p-3">Demander</th><th className="p-3">Contact</th><th className="p-3">Action</th>
+            <div className="px-5 py-5 md:px-6">
+              <label htmlFor="clinic-search" className="block text-sm font-semibold text-slate-700">Search facilities</label>
+              <div className="relative mt-2"><span aria-hidden="true" className="pointer-events-none absolute left-4 top-3 text-slate-400">⌕</span>
+                <input id="clinic-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by clinic, MHFL, CFS, Demander or contact…" className="w-full rounded-xl border border-slate-200 py-3 pl-10 pr-4 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100" />
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[940px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500"><tr>
+                  <th className="px-6 py-4 font-semibold">Clinic</th><th className="px-5 py-4 font-semibold">MHFL</th><th className="px-5 py-4 font-semibold">CFS</th><th className="px-5 py-4 font-semibold">Demander</th><th className="px-5 py-4 font-semibold">Contact</th><th className="px-5 py-4 font-semibold">Details</th>
                 </tr></thead>
-                <tbody>
-                  {filtered.map(f => <tr key={f.id} className="border-t align-top">
-                    <td className="p-3 font-medium">{f.name}</td>
-                    <td className="p-3">{f.mhfl_number || "—"}</td>
-                    <td className="p-3">{f.cfs_number || "—"}</td>
-                    <td className="p-3">{f.demander_number || "—"}</td>
-                    <td className="p-3">{f.email || "—"}<span className="block">{f.phone || ""}</span></td>
-                    <td className="p-3"><button type="button" onClick={() => edit(f)} disabled={saving}
-                      className="font-semibold text-teal-700 underline disabled:opacity-50">Edit</button></td>
+                <tbody className="divide-y divide-slate-100">
+                  {filtered.map(f => <tr key={f.id} className="hover:bg-slate-50/80">
+                    <td className="px-6 py-4"><div className="font-semibold text-slate-900">{f.name}</div><div className="mt-1 text-xs text-slate-400">Facility record</div></td>
+                    <td className="px-5 py-4 text-slate-600">{f.mhfl_number || "—"}</td>
+                    <td className="px-5 py-4 text-slate-600">{f.cfs_number || "—"}</td>
+                    <td className="px-5 py-4 text-slate-600">{f.demander_number || "—"}</td>
+                    <td className="px-5 py-4 text-slate-600"><div>{f.email || "—"}</div><div className="mt-1 text-xs">{f.phone || ""}</div></td>
+                    <td className="px-5 py-4"><button type="button" onClick={() => edit(f)} disabled={saving} className="rounded-lg border border-teal-200 px-3 py-2 font-semibold text-teal-800 hover:bg-teal-50 disabled:opacity-50">Edit clinic</button></td>
                   </tr>)}
                 </tbody>
               </table>
-              {filtered.length === 0 && <p className="p-4 text-slate-600">No matching clinics found.</p>}
+              {filtered.length === 0 && <p className="px-6 py-12 text-center text-sm text-slate-500">No matching clinics found. Try another search.</p>}
             </div>
           </section>
-          {editingId && <section className="rounded-xl border bg-white p-5 shadow-sm">
-            <h2 className="text-xl font-semibold">{editingId === "new" ? "Add clinic" : "Edit clinic"}</h2>
-            <p className="mt-1 text-sm text-slate-600">Editing does not change the clinic's UUID or existing memberships.</p>
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              {fields.map(field => <label key={field.key} className="block text-sm font-medium">
-                {field.label}{field.key === "name" ? " *" : ""}
-                <input type={field.type || "text"} value={draft[field.key] ?? ""}
-                  onChange={e => setDraft(previous => ({ ...previous, [field.key]: e.target.value }))}
-                  disabled={saving} className="mt-1 w-full rounded-lg border p-3" />
+
+          {editingId && <section id="clinic-editor" className="rounded-2xl border border-teal-200 bg-white p-6 shadow-sm md:p-8">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-5">
+              <div><p className="text-xs font-bold uppercase tracking-widest text-teal-700">Facility details</p><h2 className="mt-2 text-2xl font-bold">{editingId === "new" ? "Add new clinic" : "Edit clinic"}</h2><p className="mt-2 text-sm text-slate-500">Changes preserve the facility ID and existing nurse assignments.</p></div>
+              <button type="button" onClick={() => setEditingId(null)} disabled={saving} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600">Close</button>
+            </div>
+            <div className="mt-6 grid gap-5 md:grid-cols-2">
+              {fields.map(field => <label key={field.key} className="block text-sm font-semibold text-slate-700">
+                {field.label}{field.key === "name" && <span className="text-red-600"> *</span>}
+                <input type={field.type || "text"} value={draft[field.key] ?? ""} onChange={e => setDraft(previous => ({ ...previous, [field.key]: e.target.value }))} disabled={saving} className={inputClass} />
               </label>)}
             </div>
-            <div className="mt-5 flex gap-3">
-              <button type="button" onClick={() => void save()} disabled={saving}
-                className="rounded-lg bg-teal-700 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Save Clinic"}</button>
-              <button type="button" onClick={() => setEditingId(null)} disabled={saving}
-                className="rounded-lg border px-5 py-3 disabled:opacity-50">Cancel</button>
+            <div className="mt-7 flex flex-wrap gap-3 border-t border-slate-100 pt-6">
+              <button type="button" onClick={() => void save()} disabled={saving} className="rounded-xl bg-teal-700 px-6 py-3 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-50">{saving ? "Saving…" : editingId === "new" ? "Create clinic" : "Save changes"}</button>
+              <button type="button" onClick={() => setEditingId(null)} disabled={saving} className="rounded-xl border border-slate-200 px-6 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
             </div>
           </section>}
-          <div className="flex gap-3">
-            <button type="button" onClick={() => void load()} disabled={saving}
-              className="rounded-lg border bg-white px-4 py-3 disabled:opacity-50">Refresh Clinics</button>
-            <Link href="/admin/assign-clinic" className="rounded-lg border bg-white px-4 py-3">Assign Nurses to Clinics</Link>
-          </div>
         </>}
       </div>
     </main>
