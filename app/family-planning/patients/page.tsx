@@ -10,11 +10,7 @@ type Patient = Record<string, unknown> & {
   id: string;
 };
 
-type Membership = {
-  facility_id: string;
-  role: string;
-  active: boolean;
-};
+type Clinic = { id: string; site_name: string };
 
 const navigation = [
   { label: "Dashboard", href: "/family-planning/dashboard", icon: "▦" },
@@ -49,8 +45,8 @@ export default function FamilyPlanningPatientsPage() {
   const router = useRouter();
 
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [memberships, setMemberships] = useState<Membership[]>([]);
-  const [facilityId, setFacilityId] = useState("");
+  const [clinics, setClinics] = useState<Clinic[]>([]);
+  const [siteId, setSiteId] = useState("");
   const [search, setSearch] = useState("");
   const [genderFilter, setGenderFilter] = useState("All");
 
@@ -92,33 +88,52 @@ export default function FamilyPlanningPatientsPage() {
         const admin = adminResult.data === true;
         setIsSuperAdmin(admin);
 
-        const { data, error: membershipError } = await supabase
-          .from("fp_memberships")
-          .select("facility_id, role, active")
-          .eq("user_id", auth.user.id)
-          .eq("active", true);
+        // Super admins can select from clinics visible under their RLS policies.
+        // Nurses can only select clinics explicitly assigned to them.
+        let permittedSiteIds: string[] | null = null;
 
-        if (cancelled) return;
+        if (!admin) {
+          const { data: assignments, error: assignmentError } =
+            await supabase
+              .from("nurse_site_assignments")
+              .select("site_id")
+              .eq("nurse_id", auth.user.id);
 
-        if (membershipError) {
-          setError(membershipError.message);
-          return;
+          if (assignmentError) throw assignmentError;
+          permittedSiteIds = Array.from(
+            new Set(
+              (assignments ?? [])
+                .map((row) => row.site_id as string)
+                .filter(Boolean)
+            )
+          );
+
+          if (permittedSiteIds.length === 0) {
+            setError("No clinic is assigned to your nurse account.");
+            return;
+          }
         }
 
-        const activeMemberships = (data ?? []) as Membership[];
-        setMemberships(activeMemberships);
+        let clinicQuery = supabase
+          .from("sites")
+          .select("id,site_name")
+          .eq("is_active", true)
+          .order("site_name");
 
-        if (activeMemberships.length > 0) {
-          setFacilityId(activeMemberships[0].facility_id);
-        } else if (!admin) {
-          setError(
-            "No active clinic assignment found. Contact the administrator."
-          );
+        if (permittedSiteIds !== null) {
+          clinicQuery = clinicQuery.in("id", permittedSiteIds);
+        }
+
+        const { data: siteData, error: siteError } = await clinicQuery;
+        if (siteError) throw siteError;
+        if (cancelled) return;
+
+        const availableClinics = (siteData ?? []) as unknown as Clinic[];
+        setClinics(availableClinics);
+        if (availableClinics.length > 0) {
+          setSiteId(availableClinics[0].id);
         } else {
-          setError(
-            "Super Admin access verified, but no clinic is assigned. " +
-            "Assign a clinic to view its patient records."
-          );
+          setError("No accessible active clinics were found. Check site assignments and database permissions.");
         }
       } catch (err) {
         if (!cancelled) {
@@ -140,38 +155,56 @@ export default function FamilyPlanningPatientsPage() {
     };
   }, [router]);
 
-  const loadPatients = useCallback(async () => {
-    if (!facilityId) return;
-
+  const loadPatients = useCallback(async (selectedSiteId: string) => {
+    if (!selectedSiteId) return;
     setBusy(true);
     setError("");
     setPatients([]);
 
     try {
       const { data, error: queryError } = await supabase
-        .from("fp_patients")
+        .from("patients")
         .select("*")
-        .eq("facility_id", facilityId)
+        .eq("site_id", selectedSiteId)
+        .order("surname", { ascending: true })
         .limit(500);
 
-      if (queryError) throw new Error(queryError.message);
-
+      if (queryError) throw queryError;
+      // Avoid displaying a previous clinic's results after switching clinics.
       setPatients((data ?? []) as unknown as Patient[]);
     } catch (err) {
       setPatients([]);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load patient records."
-      );
+      setError(err instanceof Error ? err.message : "Unable to load patients.");
     } finally {
       setBusy(false);
     }
-  }, [facilityId]);
+  }, []);
 
   useEffect(() => {
-    void loadPatients();
-  }, [loadPatients]);
+    if (!siteId) return;
+    let active = true;
+    setBusy(true);
+    setPatients([]);
+    setError("");
+    async function fetchCurrentSite() {
+      try {
+        const { data, error: queryError } = await supabase
+          .from("patients")
+          .select("*")
+          .eq("site_id", siteId)
+          .order("surname", { ascending: true })
+          .limit(500);
+        if (queryError) throw queryError;
+        if (active) setPatients((data ?? []) as unknown as Patient[]);
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "Unable to load patients.");
+      } finally {
+        if (active) setBusy(false);
+      }
+    }
+    void fetchCurrentSite();
+    return () => { active = false; };
+  }, [siteId]);
 
   const genders = useMemo(() => {
     return Array.from(
@@ -388,13 +421,13 @@ export default function FamilyPlanningPatientsPage() {
               <div className="dt-actions">
                 <button
                   className="dt-button dt-button-outline"
-                  disabled={busy || !facilityId}
-                  onClick={() => void loadPatients()}
+                  disabled={busy || !siteId}
+                  onClick={() => void loadPatients(siteId)}
                 >
                   {busy ? "Refreshing..." : "Refresh"}
                 </button>
 
-                {facilityId && (
+                {siteId && (
                   <Link
                     href="/nurse/patients/new"
                     className="dt-button dt-button-primary"
@@ -411,7 +444,7 @@ export default function FamilyPlanningPatientsPage() {
               </div>
             )}
 
-            {facilityId && (
+            {siteId && (
               <>
                 <div className="dt-filters">
                   <label className="dt-field">
@@ -446,19 +479,19 @@ export default function FamilyPlanningPatientsPage() {
                   <label className="dt-field">
                     <span>Assigned Clinic</span>
                     <select
-                      value={facilityId}
-                      disabled={memberships.length <= 1}
+                      value={siteId}
+                      disabled={clinics.length <= 1}
                       onChange={(event) => {
                         setPatients([]);
-                        setFacilityId(event.target.value);
+                        setSiteId(event.target.value);
                       }}
                     >
-                      {memberships.map((membership) => (
+                      {clinics.map((clinic) => (
                         <option
-                          key={membership.facility_id}
-                          value={membership.facility_id}
+                          key={clinic.id}
+                          value={clinic.id}
                         >
-                          {membership.facility_id}
+                          {clinic.site_name}
                         </option>
                       ))}
                     </select>
