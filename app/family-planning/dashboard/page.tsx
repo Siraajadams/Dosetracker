@@ -11,7 +11,7 @@ type Module = { title: string; description: string; href: string; icon: string; 
 
 const adminModules: Module[] = [
   { title: "Patient Management", description: "Review patient records and treatment history across facilities.", href: "/family-planning/patients", icon: "👥", category: "Clinical oversight", accent: "#D9F3EC" },
-  { title: "Contraceptive Analytics", description: "Monitor administrations, top medications and adverse events.", href: "/family-planning/medications", icon: "💉", category: "Clinical oversight", accent: "#E8E6FF" },
+  { title: "Contraceptive Analytics", description: "Monitor administrations, top medications and adverse events.", href: "/family-planning/medications/usage", icon: "💉", category: "Clinical oversight", accent: "#E8E6FF" },
   { title: "Follow-up Appointments", description: "Track appointment calendars, attendance and adherence.", href: "/family-planning/appointments", icon: "📅", category: "Clinical oversight", accent: "#E5F1FF" },
   { title: "Inventory Management", description: "View stock on hand, consumption and reorders by site.", href: "/family-planning/inventory", icon: "📦", category: "Operations", accent: "#FFF0D8" },
   { title: "Clinical Reports", description: "Access monthly facility, medication and stock reports.", href: "/family-planning/reports", icon: "📊", category: "Operations", accent: "#E7EFF7" },
