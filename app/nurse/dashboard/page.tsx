@@ -360,6 +360,13 @@ export default function NurseDashboardPage() {
     }
   }
 
+  async function openStockPage(path: string) {
+    setErrorMessage("");
+    const allowed = await verifySiteAccess();
+    if (!allowed) return;
+    router.push(`${path}?site_id=${encodeURIComponent(siteId)}`);
+  }
+
   async function logout() {
     const { error } = await supabase.auth.signOut();
 
@@ -702,6 +709,51 @@ export default function NurseDashboardPage() {
             </button>
           </section>
         </div>
+
+        <section style={{ ...cardStyle, marginTop: 22 }}>
+          <h2 style={{ marginTop: 0, color: "#075c59" }}>
+            Pharmacy Stock Management
+          </h2>
+          <p style={{ color: "#64748b" }}>
+            Record contraceptive stock movements and prepare depot orders
+            for your assigned pharmacy.
+          </p>
+          <p><strong>Selected pharmacy:</strong>{" "}
+            {selectedSite?.site_name || "Select a clinic above"}
+          </p>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))",
+            gap: 12,
+          }}>
+            {[
+              { label: "Stock Received", path: "/nurse/stock/received", detail: "Record depot deliveries" },
+              { label: "Stock Dispensed", path: "/nurse/stock/dispensed", detail: "Record medication issued" },
+              { label: "Stock Wasted", path: "/nurse/stock/wasted", detail: "Record wastage and reasons" },
+              { label: "Stock Reorder", path: "/nurse/stock/reorder", detail: "Prepare an order for depot" },
+              { label: "Stock Dashboard", path: "/nurse/stock", detail: "View pharmacy inventory" },
+              { label: "Order History", path: "/nurse/stock/orders", detail: "Track depot orders" },
+            ].map(item => (
+              <button
+                key={item.path}
+                type="button"
+                disabled={!siteId}
+                onClick={() => void openStockPage(item.path)}
+                style={{
+                  ...secondaryButton,
+                  textAlign: "left",
+                  opacity: siteId ? 1 : 0.55,
+                  cursor: siteId ? "pointer" : "not-allowed",
+                }}
+              >
+                <span style={{ display: "block", fontWeight: 700 }}>{item.label}</span>
+                <span style={{ display: "block", marginTop: 6, fontSize: 12, fontWeight: 400 }}>
+                  {item.detail}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
     </main>
   );
