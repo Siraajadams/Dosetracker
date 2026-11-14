@@ -1,7 +1,12 @@
 
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -23,56 +28,141 @@ type Medication = {
 type MedicationRow = {
   key: string;
   medicationId: string;
-  quantity: string;
+  dose: string;
+  route: string;
+  batchNumber: string;
+  expiryDate: string;
+  injectionSite: string;
   notes: string;
 };
 
-function localToday() {
-  const date = new Date();
+const routes = [
+  "Oral",
+  "Intramuscular",
+  "Subcutaneous",
+  "Implant",
+  "Topical",
+  "Vaginal",
+  "Barrier",
+  "Dispensed / Supplied",
+  "Other",
+];
+
+const services = [
+  "Family Planning",
+  "Contraceptive Injection",
+  "Contraceptive Implant",
+  "Oral Contraceptive",
+  "Condom Supply",
+  "Other",
+];
+
+function today() {
+  const d = new Date();
   return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, "0"),
-    String(date.getDate()).padStart(2, "0"),
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
   ].join("-");
 }
 
-function addDays(date: string, days: number) {
-  if (!date) return "";
-
-  const result = new Date(`${date}T12:00:00Z`);
-  if (Number.isNaN(result.getTime())) return "";
-
-  result.setUTCDate(result.getUTCDate() + days);
-  return result.toISOString().slice(0, 10);
+function addDays(value: string, days: number) {
+  if (!value) return "";
+  const d = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
-function weekendName(date: string) {
-  if (!date) return "";
-
-  const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-
-  if (day === 0) return "Sunday";
-  if (day === 6) return "Saturday";
-
-  return "";
+function easterSunday(year: number) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k + 7) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function newMedicationRow(): MedicationRow {
+function saHoliday(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return "";
+
+  const year = Number(value.slice(0, 4));
+  const holidays = new Map<string, string>();
+
+  const fixed: Array<[string, string]> = [
+    ["01-01", "New Year's Day"],
+    ["03-21", "Human Rights Day"],
+    ["04-27", "Freedom Day"],
+    ["05-01", "Workers' Day"],
+    ["06-16", "Youth Day"],
+    ["08-09", "National Women's Day"],
+    ["09-24", "Heritage Day"],
+    ["12-16", "Day of Reconciliation"],
+    ["12-25", "Christmas Day"],
+    ["12-26", "Day of Goodwill"],
+  ];
+
+  for (const [day, name] of fixed) {
+    const date = `${year}-${day}`;
+    holidays.set(date, name);
+
+    if (new Date(`${date}T12:00:00Z`).getUTCDay() === 0) {
+      const observed = addDays(date, 1);
+      holidays.set(observed, `${name} (observed)`);
+    }
+  }
+
+  const easter = easterSunday(year);
+  holidays.set(addDays(easter, -2), "Good Friday");
+  holidays.set(addDays(easter, 1), "Family Day");
+
+  return holidays.get(value) || "";
+}
+
+function dateWarning(value: string) {
+  if (!value) return "";
+
+  const holiday = saHoliday(value);
+  const day = new Date(`${value}T12:00:00Z`).getUTCDay();
+
+  const issues: string[] = [];
+  if (day === 0) issues.push("Sunday");
+  if (day === 6) issues.push("Saturday");
+  if (holiday) issues.push(holiday);
+
+  return issues.join(" · ");
+}
+
+function createRow(): MedicationRow {
   return {
-    key: crypto.randomUUID(),
+    key: Math.random().toString(36).slice(2),
     medicationId: "",
-    quantity: "1",
+    dose: "",
+    route: "",
+    batchNumber: "",
+    expiryDate: "",
+    injectionSite: "",
     notes: "",
   };
 }
 
-function messageOf(error: unknown) {
-  if (error instanceof Error) return error.message;
-
-  if (error && typeof error === "object" && "message" in error) {
+function errorMessage(error: unknown) {
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error
+  ) {
     return String(error.message);
   }
-
   return String(error);
 }
 
@@ -84,45 +174,63 @@ export default function NewMedicationAdministrationPage() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [medications, setMedications] = useState<Medication[]>([]);
   const [rows, setRows] = useState<MedicationRow[]>([
-    newMedicationRow(),
+    createRow(),
   ]);
 
+  const [serviceType, setServiceType] =
+    useState("Family Planning");
   const [administrationDate, setAdministrationDate] =
-    useState(localToday());
+    useState(today());
 
+  const [followUpRequired, setFollowUpRequired] =
+    useState(true);
   const [interval, setInterval] = useState("56");
   const [customDays, setCustomDays] = useState("42");
-  const [nextPlannedDate, setNextPlannedDate] = useState("");
-  const [dateAdjusted, setDateAdjusted] = useState(false);
-  const [followUpRequired, setFollowUpRequired] = useState(true);
+  const [manualAdjustment, setManualAdjustment] =
+    useState(false);
+  const [manualDate, setManualDate] = useState("");
+
+  const [allergiesReviewed, setAllergiesReviewed] =
+    useState(false);
+  const [
+    contraindicationsReviewed,
+    setContraindicationsReviewed,
+  ] = useState(false);
+  const [consentConfirmed, setConsentConfirmed] =
+    useState(false);
+
+  const [adverseEvents, setAdverseEvents] = useState("");
   const [clinicalNotes, setClinicalNotes] = useState("");
+  const [clinicalAction, setClinicalAction] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const intervalDays =
-    interval === "custom" ? Number(customDays) : Number(interval);
+  const days =
+    interval === "custom"
+      ? Number(customDays)
+      : Number(interval);
 
-  const intervalValid =
-    Number.isInteger(intervalDays) &&
-    intervalDays >= 1 &&
-    intervalDays <= 365;
+  const validInterval =
+    Number.isInteger(days) && days >= 1 && days <= 365;
 
-  const calculatedDate = useMemo(
+  const forecastDate = useMemo(
     () =>
-      intervalValid
-        ? addDays(administrationDate, intervalDays)
+      validInterval
+        ? addDays(administrationDate, days)
         : "",
-    [administrationDate, intervalDays, intervalValid]
+    [administrationDate, days, validInterval]
   );
 
-  useEffect(() => {
-    if (!dateAdjusted) {
-      setNextPlannedDate(calculatedDate);
-    }
-  }, [calculatedDate, dateAdjusted]);
+  const plannedDate = manualAdjustment
+    ? manualDate
+    : forecastDate;
+
+  const warning = followUpRequired
+    ? dateWarning(plannedDate)
+    : "";
 
   useEffect(() => {
     let cancelled = false;
@@ -140,7 +248,7 @@ export default function NewMedicationAdministrationPage() {
           return;
         }
 
-        const { data: patientData, error: patientError } =
+        const { data: person, error: patientError } =
           await supabase
             .from("patients")
             .select(
@@ -150,17 +258,16 @@ export default function NewMedicationAdministrationPage() {
             .single();
 
         if (patientError) throw patientError;
-
-        if (!patientData?.site_id) {
+        if (!person?.site_id) {
           throw new Error("Patient has no assigned clinic.");
         }
 
-        const [membership, nurseAssignment] = await Promise.all([
+        const [membership, assignment] = await Promise.all([
           supabase
             .from("fp_memberships")
             .select("facility_id")
             .eq("user_id", auth.user.id)
-            .eq("facility_id", patientData.site_id)
+            .eq("facility_id", person.site_id)
             .eq("active", true)
             .limit(1),
 
@@ -168,15 +275,14 @@ export default function NewMedicationAdministrationPage() {
             .from("nurse_site_assignments")
             .select("site_id")
             .eq("nurse_id", auth.user.id)
-            .eq("site_id", patientData.site_id)
+            .eq("site_id", person.site_id)
             .limit(1),
         ]);
 
-        if (membership.error) throw membership.error;
-        if (nurseAssignment.error) throw nurseAssignment.error;
-
+        // Either active membership or assignment permits access.
         if (
-          !(membership.data?.length || nurseAssignment.data?.length)
+          !membership.data?.length &&
+          !assignment.data?.length
         ) {
           throw new Error(
             "You are not assigned to this patient's clinic."
@@ -190,26 +296,25 @@ export default function NewMedicationAdministrationPage() {
 
         if (catalogueError) throw catalogueError;
 
-        // Catalogue naming may differ between installations.
-        const normalized = (catalogue || [])
+        const items = (catalogue || [])
           .map((item: Record<string, unknown>) => ({
             id: String(item.id || ""),
             name: String(
               item.medication_name ||
-                item.name ||
-                item.product_name ||
-                ""
+              item.name ||
+              item.product_name ||
+              ""
             ),
           }))
           .filter((item) => item.id && item.name)
           .sort((a, b) => a.name.localeCompare(b.name));
 
         if (!cancelled) {
-          setPatient(patientData as Patient);
-          setMedications(normalized);
+          setPatient(person as Patient);
+          setMedications(items);
         }
       } catch (err) {
-        if (!cancelled) setError(messageOf(err));
+        if (!cancelled) setError(errorMessage(err));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -224,103 +329,92 @@ export default function NewMedicationAdministrationPage() {
 
   function updateRow(
     key: string,
-    field: "medicationId" | "quantity" | "notes",
+    field: keyof Omit<MedicationRow, "key">,
     value: string
   ) {
-    setRows((current) =>
-      current.map((row) =>
-        row.key === key ? { ...row, [field]: value } : row
+    setRows((previous) =>
+      previous.map((row) =>
+        row.key === key
+          ? { ...row, [field]: value }
+          : row
       )
     );
   }
 
   function addMedication() {
-    setRows((current) => [...current, newMedicationRow()]);
+    setRows((previous) => [...previous, createRow()]);
   }
 
   function removeMedication(key: string) {
-    setRows((current) =>
-      current.length === 1
-        ? current
-        : current.filter((row) => row.key !== key)
+    setRows((previous) =>
+      previous.length > 1
+        ? previous.filter((row) => row.key !== key)
+        : previous
     );
   }
 
-  function chooseInterval(value: string) {
+  function updateInterval(value: string) {
     setInterval(value);
-    setDateAdjusted(false);
+    setManualAdjustment(false);
+    setManualDate("");
   }
-
-  function changeAdministrationDate(value: string) {
-    setAdministrationDate(value);
-    setDateAdjusted(false);
-  }
-
-  function changePlannedDate(value: string) {
-    setNextPlannedDate(value);
-    setDateAdjusted(true);
-  }
-
-  const weekend = followUpRequired
-    ? weekendName(nextPlannedDate)
-    : "";
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setSuccess("");
 
-    if (!patient) {
-      setError("Patient record has not loaded.");
-      return;
-    }
+    if (!patient || saving) return;
 
     if (!administrationDate) {
-      setError("Enter the administration date.");
-      return;
-    }
-
-    if (!rows.length || rows.some((row) => !row.medicationId)) {
-      setError("Select a medication in every row.");
+      setError("Administration date is required.");
       return;
     }
 
     if (
       rows.some(
         (row) =>
-          !Number.isFinite(Number(row.quantity)) ||
-          Number(row.quantity) <= 0
+          !row.medicationId ||
+          !row.dose.trim() ||
+          !row.route
       )
     ) {
-      setError("Enter a valid quantity for every medication.");
-      return;
-    }
-
-    if (
-      followUpRequired &&
-      (!intervalValid || !nextPlannedDate)
-    ) {
-      setError("Select a valid follow-up interval and date.");
-      return;
-    }
-
-    if (
-      followUpRequired &&
-      nextPlannedDate < administrationDate
-    ) {
       setError(
-        "The next planned date cannot precede the administration date."
+        "Every medication requires a selection, dose/quantity and route."
       );
       return;
     }
 
-    const duplicateIds = rows
-      .map((row) => row.medicationId)
-      .filter((id, index, all) => all.indexOf(id) !== index);
-
-    if (duplicateIds.length) {
+    if (
+      !allergiesReviewed ||
+      !contraindicationsReviewed ||
+      !consentConfirmed
+    ) {
       setError(
-        "The same medication is selected more than once. Combine quantities into one row."
+        "Complete the clinical safety confirmations before saving."
+      );
+      return;
+    }
+
+    if (
+      followUpRequired &&
+      (!validInterval ||
+        !plannedDate ||
+        plannedDate < administrationDate)
+    ) {
+      setError(
+        "Choose a valid follow-up interval and planned date."
+      );
+      return;
+    }
+
+    const medicationIds = rows.map(
+      (row) => row.medicationId
+    );
+
+    if (new Set(medicationIds).size !== medicationIds.length) {
+      setError(
+        "A medication has been selected twice. Combine its quantity into one row."
       );
       return;
     }
@@ -332,55 +426,59 @@ export default function NewMedicationAdministrationPage() {
         await supabase.auth.getUser();
 
       if (authError || !auth.user) {
-        throw new Error("Session expired. Please sign in again.");
+        throw new Error("Your session has expired.");
       }
-
-      /*
-       * IMPORTANT:
-       * This payload assumes the following columns exist:
-       *
-       * patient_id, site_id, medication_id, quantity,
-       * administered_at, next_dose_date, notes
-       *
-       * Confirm the actual medication_administrations schema
-       * before enabling this insert in production.
-       *
-       * Each medication becomes a separate administration record.
-       * No existing records are updated or deleted.
-       */
 
       const payload = rows.map((row) => {
         const medication = medications.find(
           (item) => item.id === row.medicationId
         );
 
+        if (!medication) {
+          throw new Error(
+            "One selected medication is not in the catalogue."
+          );
+        }
+
         return {
           patient_id: patient.id,
           site_id: patient.site_id,
-          medication_id: row.medicationId,
-          quantity: Number(row.quantity),
-          administered_at: `${administrationDate}T12:00:00`,
-          next_dose_date: followUpRequired
-            ? nextPlannedDate
-            : null,
-          notes: [
+          administered_by: auth.user.id,
+          service_type: serviceType,
+          medication_name: medication.name,
+          dose: row.dose.trim(),
+          route: row.route,
+          batch_number: row.batchNumber.trim() || null,
+          expiry_date: row.expiryDate || null,
+          administered_at: `${administrationDate}T12:00:00+02:00`,
+          injection_site: row.injectionSite.trim() || null,
+          adverse_events: adverseEvents.trim() || null,
+          clinical_notes: [
             clinicalNotes.trim(),
-            medication?.name
-              ? `Medication: ${medication.name}`
-              : "",
             row.notes.trim(),
             followUpRequired
-              ? `Planned interval: ${intervalDays} days`
-              : "No follow-up required",
-            dateAdjusted
-              ? `Next planned date manually adjusted from ${calculatedDate}`
+              ? `Selected follow-up interval: ${days} days`
+              : "No follow-up planned",
+            manualAdjustment
+              ? `Forecast date ${forecastDate}; nurse-adjusted date ${plannedDate}`
               : "",
           ]
             .filter(Boolean)
-            .join("\n"),
+            .join("\n") || null,
+          next_dose_date: followUpRequired
+            ? plannedDate
+            : null,
+          allergies_reviewed: allergiesReviewed,
+          contraindications_reviewed:
+            contraindicationsReviewed,
+          consent_confirmed: consentConfirmed,
+          clinical_action: clinicalAction.trim() || null,
+          catalogue_item_id: medication.id,
         };
       });
 
+      // One insert for the entire encounter.
+      // A failed insert will not leave half the rows saved.
       const { error: insertError } = await supabase
         .from("medication_administrations")
         .insert(payload);
@@ -388,15 +486,13 @@ export default function NewMedicationAdministrationPage() {
       if (insertError) throw insertError;
 
       setSuccess(
-        `${rows.length} medication administration record(s) saved.`
+        `${rows.length} medication administration record(s) saved successfully.`
       );
 
-      setTimeout(() => {
-        router.push(`/nurse/patients/${patient.id}`);
-        router.refresh();
-      }, 900);
+      router.push(`/nurse/patients/${patient.id}`);
+      router.refresh();
     } catch (err) {
-      setError(messageOf(err));
+      setError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -407,17 +503,18 @@ export default function NewMedicationAdministrationPage() {
       <div className="fp-container">
         <header className="fp-header">
           <div>
-            <p className="fp-eyebrow">DOSETRACK · FAMILY PLANNING</p>
+            <p className="fp-eyebrow">
+              DOSETRACK / FAMILY PLANNING
+            </p>
             <h1>Medication Administration</h1>
             <p>
-              Record multiple contraceptive products and plan
-              the next follow-up.
+              Record multiple medications in a single encounter.
             </p>
           </div>
 
           <Link
             href={`/nurse/patients/${patientId}`}
-            className="fp-button secondary"
+            className="fp-btn outline"
           >
             Back to Patient
           </Link>
@@ -441,12 +538,12 @@ export default function NewMedicationAdministrationPage() {
           </section>
         ) : !patient ? (
           <section className="fp-card">
-            Patient information could not be loaded.
+            Unable to load patient information.
           </section>
         ) : (
           <form onSubmit={save}>
             <section className="fp-card">
-              <p className="fp-eyebrow">PATIENT INFORMATION</p>
+              <p className="fp-eyebrow">PATIENT</p>
               <h2>
                 {[patient.first_name, patient.surname]
                   .filter(Boolean)
@@ -455,26 +552,61 @@ export default function NewMedicationAdministrationPage() {
               <p>
                 {patient.id_number ||
                   patient.passport_number ||
-                  "No ID/passport recorded"}
+                  "No ID or passport recorded"}
               </p>
             </section>
 
             <section className="fp-card">
-              <div className="fp-section-heading">
+              <h2>Administration Details</h2>
+
+              <div className="fp-grid">
+                <label>
+                  Service Type *
+                  <select
+                    value={serviceType}
+                    onChange={(e) =>
+                      setServiceType(e.target.value)
+                    }
+                  >
+                    {services.map((service) => (
+                      <option key={service} value={service}>
+                        {service}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Date Administered *
+                  <input
+                    type="date"
+                    required
+                    value={administrationDate}
+                    onChange={(e) => {
+                      setAdministrationDate(e.target.value);
+                      setManualAdjustment(false);
+                    }}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="fp-card">
+              <div className="fp-heading">
                 <div>
                   <p className="fp-eyebrow">
-                    MEDICATIONS ADMINISTERED
+                    MEDICATION CATALOGUE
                   </p>
-                  <h2>Medication Selection</h2>
+                  <h2>Medications Administered</h2>
                   <p>
-                    Add all medications and contraceptive supplies
-                    provided during this encounter.
+                    Add injections, tablets, implants, condoms
+                    and other contraceptive products.
                   </p>
                 </div>
 
                 <button
                   type="button"
-                  className="fp-button secondary"
+                  className="fp-btn outline"
                   onClick={addMedication}
                 >
                   + Add Medication
@@ -483,21 +615,23 @@ export default function NewMedicationAdministrationPage() {
 
               {medications.length === 0 && (
                 <div className="fp-alert warning">
-                  No medications found in the catalogue.
-                  Check the medication table and naming fields.
+                  No catalogue medications were loaded.
+                  Check the medication catalogue table.
                 </div>
               )}
 
               {rows.map((row, index) => (
-                <div className="fp-medication-row" key={row.key}>
-                  <div className="fp-medication-heading">
-                    <strong>Medication {index + 1}</strong>
+                <div className="fp-med-row" key={row.key}>
+                  <div className="fp-heading">
+                    <h3>Medication {index + 1}</h3>
 
                     {rows.length > 1 && (
                       <button
                         type="button"
                         className="fp-remove"
-                        onClick={() => removeMedication(row.key)}
+                        onClick={() =>
+                          removeMedication(row.key)
+                        }
                       >
                         Remove
                       </button>
@@ -518,7 +652,9 @@ export default function NewMedicationAdministrationPage() {
                           )
                         }
                       >
-                        <option value="">Select medication</option>
+                        <option value="">
+                          Select medication
+                        </option>
                         {medications.map((medication) => (
                           <option
                             key={medication.id}
@@ -531,17 +667,81 @@ export default function NewMedicationAdministrationPage() {
                     </label>
 
                     <label>
-                      Quantity *
+                      Dose / Quantity *
                       <input
-                        type="number"
-                        min="0.01"
-                        step="any"
                         required
-                        value={row.quantity}
+                        value={row.dose}
                         onChange={(e) =>
                           updateRow(
                             row.key,
-                            "quantity",
+                            "dose",
+                            e.target.value
+                          )
+                        }
+                        placeholder="e.g. 150 mg, 1 tablet, 10 condoms"
+                      />
+                    </label>
+
+                    <label>
+                      Route *
+                      <select
+                        required
+                        value={row.route}
+                        onChange={(e) =>
+                          updateRow(
+                            row.key,
+                            "route",
+                            e.target.value
+                          )
+                        }
+                      >
+                        <option value="">Select route</option>
+                        {routes.map((route) => (
+                          <option key={route} value={route}>
+                            {route}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label>
+                      Injection Site
+                      <input
+                        value={row.injectionSite}
+                        onChange={(e) =>
+                          updateRow(
+                            row.key,
+                            "injectionSite",
+                            e.target.value
+                          )
+                        }
+                        placeholder="If applicable"
+                      />
+                    </label>
+
+                    <label>
+                      Batch Number
+                      <input
+                        value={row.batchNumber}
+                        onChange={(e) =>
+                          updateRow(
+                            row.key,
+                            "batchNumber",
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Expiry Date
+                      <input
+                        type="date"
+                        value={row.expiryDate}
+                        onChange={(e) =>
+                          updateRow(
+                            row.key,
+                            "expiryDate",
                             e.target.value
                           )
                         }
@@ -551,7 +751,8 @@ export default function NewMedicationAdministrationPage() {
 
                   <label>
                     Medication Notes
-                    <input
+                    <textarea
+                      rows={2}
                       value={row.notes}
                       onChange={(e) =>
                         updateRow(
@@ -560,7 +761,7 @@ export default function NewMedicationAdministrationPage() {
                           e.target.value
                         )
                       }
-                      placeholder="Dose, route, batch or other details"
+                      placeholder="Additional medication details"
                     />
                   </label>
                 </div>
@@ -568,45 +769,35 @@ export default function NewMedicationAdministrationPage() {
             </section>
 
             <section className="fp-card">
-              <p className="fp-eyebrow">ADMINISTRATION DETAILS</p>
-              <h2>Administration & Next Planned Date</h2>
+              <p className="fp-eyebrow">
+                DEPARTMENT OF HEALTH FOLLOW-UP
+              </p>
+              <h2>Next Planned Date</h2>
 
-              <div className="fp-grid">
-                <label>
-                  Date Administered *
-                  <input
-                    type="date"
-                    required
-                    value={administrationDate}
-                    onChange={(e) =>
-                      changeAdministrationDate(e.target.value)
-                    }
-                  />
-                </label>
-
-                <label>
-                  Follow-up Required
-                  <select
-                    value={followUpRequired ? "yes" : "no"}
-                    onChange={(e) =>
-                      setFollowUpRequired(e.target.value === "yes")
-                    }
-                  >
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </label>
-              </div>
+              <label>
+                Follow-up Required
+                <select
+                  value={followUpRequired ? "yes" : "no"}
+                  onChange={(e) =>
+                    setFollowUpRequired(
+                      e.target.value === "yes"
+                    )
+                  }
+                >
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
 
               {followUpRequired && (
-                <>
-                  <div className="fp-scheduler">
+                <div className="fp-scheduler">
+                  <div className="fp-grid">
                     <label>
-                      Next Planned Interval *
+                      Follow-up Interval *
                       <select
                         value={interval}
                         onChange={(e) =>
-                          chooseInterval(e.target.value)
+                          updateInterval(e.target.value)
                         }
                       >
                         <option value="28">28 days</option>
@@ -620,7 +811,7 @@ export default function NewMedicationAdministrationPage() {
 
                     {interval === "custom" && (
                       <label>
-                        Custom Days *
+                        Custom Days
                         <input
                           type="number"
                           min="1"
@@ -629,7 +820,7 @@ export default function NewMedicationAdministrationPage() {
                           value={customDays}
                           onChange={(e) => {
                             setCustomDays(e.target.value);
-                            setDateAdjusted(false);
+                            setManualAdjustment(false);
                           }}
                         />
                       </label>
@@ -640,84 +831,155 @@ export default function NewMedicationAdministrationPage() {
                       <input
                         type="date"
                         required
-                        value={nextPlannedDate}
-                        onChange={(e) =>
-                          changePlannedDate(e.target.value)
-                        }
+                        value={plannedDate}
+                        onChange={(e) => {
+                          setManualDate(e.target.value);
+                          setManualAdjustment(true);
+                        }}
                       />
                     </label>
-
-                    <p className="fp-help">
-                      Forecast: {calculatedDate || "—"}. The nurse
-                      can edit the planned date without changing
-                      the selected interval.
-                    </p>
-
-                    {dateAdjusted && (
-                      <div className="fp-alert info">
-                        Planned date manually adjusted from{" "}
-                        {calculatedDate}.
-                        <button
-                          type="button"
-                          className="fp-inline-button"
-                          onClick={() => {
-                            setDateAdjusted(false);
-                            setNextPlannedDate(calculatedDate);
-                          }}
-                        >
-                          Restore calculated date
-                        </button>
-                      </div>
-                    )}
-
-                    {weekend && (
-                      <div className="fp-alert warning">
-                        The selected date falls on a {weekend}.
-                        Please confirm clinic availability or choose
-                        another date.
-                      </div>
-                    )}
-
-                    <p className="fp-help">
-                      Check South African public holidays before
-                      confirming. Public holiday validation is not
-                      yet connected to a holiday calendar.
-                    </p>
                   </div>
-                </>
+
+                  <div className="fp-preview">
+                    <strong>
+                      Calculated date: {forecastDate || "—"}
+                    </strong>
+                    <p>
+                      Selected interval: {days} days
+                    </p>
+                    {manualAdjustment && (
+                      <p>
+                        Nurse-adjusted date: {plannedDate}
+                      </p>
+                    )}
+                  </div>
+
+                  {warning && (
+                    <div className="fp-alert warning">
+                      <strong>Scheduling warning:</strong>{" "}
+                      {warning}. Check clinic availability
+                      and adjust the date if necessary.
+                    </div>
+                  )}
+
+                  {manualAdjustment && (
+                    <button
+                      type="button"
+                      className="fp-btn outline"
+                      onClick={() => {
+                        setManualAdjustment(false);
+                        setManualDate("");
+                      }}
+                    >
+                      Restore Calculated Date
+                    </button>
+                  )}
+
+                  <p className="fp-help">
+                    The date is editable for weekends and
+                    South African public holidays. Standard
+                    statutory holidays are checked; special
+                    proclaimed holidays require confirmation.
+                  </p>
+                </div>
               )}
+            </section>
+
+            <section className="fp-card">
+              <p className="fp-eyebrow">
+                CLINICAL SAFETY
+              </p>
+              <h2>Clinical Review & Consent</h2>
+
+              <label className="fp-check">
+                <input
+                  type="checkbox"
+                  checked={allergiesReviewed}
+                  onChange={(e) =>
+                    setAllergiesReviewed(e.target.checked)
+                  }
+                />
+                Allergies reviewed
+              </label>
+
+              <label className="fp-check">
+                <input
+                  type="checkbox"
+                  checked={contraindicationsReviewed}
+                  onChange={(e) =>
+                    setContraindicationsReviewed(
+                      e.target.checked
+                    )
+                  }
+                />
+                Contraindications reviewed
+              </label>
+
+              <label className="fp-check">
+                <input
+                  type="checkbox"
+                  checked={consentConfirmed}
+                  onChange={(e) =>
+                    setConsentConfirmed(e.target.checked)
+                  }
+                />
+                Patient consent confirmed
+              </label>
 
               <label>
-                General Clinical Notes
+                Adverse Events
+                <textarea
+                  rows={2}
+                  value={adverseEvents}
+                  onChange={(e) =>
+                    setAdverseEvents(e.target.value)
+                  }
+                  placeholder="Record findings, or 'None reported'"
+                />
+              </label>
+
+              <label>
+                Clinical Action
+                <input
+                  value={clinicalAction}
+                  onChange={(e) =>
+                    setClinicalAction(e.target.value)
+                  }
+                  placeholder="e.g. Administered, supplied, referred"
+                />
+              </label>
+
+              <label>
+                Clinical Notes
                 <textarea
                   rows={4}
                   value={clinicalNotes}
                   onChange={(e) =>
                     setClinicalNotes(e.target.value)
                   }
-                  placeholder="Clinical observations, counselling and follow-up instructions"
+                  placeholder="Counselling, observations and clinical plan"
                 />
               </label>
             </section>
 
-            <div className="fp-footer-actions">
+            <div className="fp-actions">
               <Link
                 href={`/nurse/patients/${patient.id}`}
-                className="fp-button secondary"
+                className="fp-btn outline"
               >
                 Cancel
               </Link>
 
               <button
                 type="submit"
-                className="fp-button primary"
+                className="fp-btn primary"
                 disabled={
                   saving ||
                   medications.length === 0
                 }
               >
                 {saving
-                  ? "Saving Administration..."
+                  ? "Saving..."
                   : `Save ${rows.length} Medication${
                       rows.length === 1 ? "" : "s"
                     }`}
@@ -737,14 +999,13 @@ export default function NewMedicationAdministrationPage() {
         }
 
         .fp-container {
-          max-width: 1120px;
+          max-width: 1150px;
           margin: auto;
         }
 
         .fp-header,
-        .fp-section-heading,
-        .fp-medication-heading,
-        .fp-footer-actions {
+        .fp-heading,
+        .fp-actions {
           display: flex;
           justify-content: space-between;
           align-items: center;
@@ -758,11 +1019,11 @@ export default function NewMedicationAdministrationPage() {
 
         .fp-header h1 {
           margin: 7px 0;
-          font-size: 31px;
+          font-size: 32px;
         }
 
         .fp-header p,
-        .fp-section-heading p,
+        .fp-heading p,
         .fp-help {
           color: #647781;
         }
@@ -783,13 +1044,17 @@ export default function NewMedicationAdministrationPage() {
         }
 
         .fp-card h2 {
-          margin: 8px 0 16px;
+          margin: 8px 0 17px;
+          font-size: 22px;
         }
 
         .fp-grid {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 16px;
+          grid-template-columns: repeat(
+            2,
+            minmax(0, 1fr)
+          );
+          gap: 17px;
         }
 
         .fp-page label {
@@ -806,6 +1071,7 @@ export default function NewMedicationAdministrationPage() {
         .fp-page select,
         .fp-page textarea {
           width: 100%;
+          min-width: 0;
           padding: 12px;
           border: 1px solid #dbe4e9;
           border-radius: 9px;
@@ -815,67 +1081,93 @@ export default function NewMedicationAdministrationPage() {
           box-sizing: border-box;
         }
 
-        .fp-button {
+        .fp-btn {
           display: inline-flex;
-          justify-content: center;
           align-items: center;
-          padding: 12px 18px;
-          border-radius: 9px;
+          justify-content: center;
           border: 1px solid #dbe4e9;
+          border-radius: 9px;
+          padding: 12px 18px;
           font-size: 13px;
           font-weight: 700;
           text-decoration: none;
           cursor: pointer;
         }
 
-        .fp-button.primary {
+        .fp-btn.primary {
           background: #0e756d;
-          color: white;
           border-color: #0e756d;
+          color: white;
         }
 
-        .fp-button.secondary {
+        .fp-btn.outline {
           background: white;
           color: #35505a;
         }
 
-        .fp-button:disabled {
+        .fp-btn:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
 
-        .fp-medication-row {
-          padding: 19px;
+        .fp-med-row {
+          padding: 20px;
+          margin-top: 18px;
           background: #f7fafb;
           border: 1px solid #e3eaf0;
           border-radius: 12px;
-          margin-top: 16px;
         }
 
-        .fp-medication-heading {
-          margin-bottom: 15px;
+        .fp-med-row h3 {
+          margin: 0 0 15px;
         }
 
         .fp-remove {
           background: transparent;
-          color: #b32626;
           border: none;
+          color: #b32626;
           font-weight: 700;
           cursor: pointer;
         }
 
         .fp-scheduler {
-          padding: 20px;
           background: #f2faf8;
           border: 1px solid #d5ebe5;
           border-radius: 12px;
-          margin: 12px 0 22px;
+          padding: 20px;
+          margin-top: 14px;
+        }
+
+        .fp-preview {
+          background: white;
+          border-radius: 10px;
+          padding: 17px;
+          margin-bottom: 16px;
+          color: #0e756d;
+        }
+
+        .fp-preview p {
+          margin-bottom: 0;
+          font-size: 13px;
+        }
+
+        .fp-page label.fp-check {
+          display: flex;
+          flex-direction: row;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .fp-check input {
+          width: 18px;
+          height: 18px;
+          flex-shrink: 0;
         }
 
         .fp-alert {
+          padding: 15px;
           border-radius: 9px;
-          padding: 14px;
-          margin-bottom: 16px;
+          margin-bottom: 17px;
           font-size: 13px;
         }
 
@@ -894,28 +1186,13 @@ export default function NewMedicationAdministrationPage() {
           color: #8b6100;
         }
 
-        .fp-alert.info {
-          background: #e9f2fb;
-          color: #255f92;
-        }
-
-        .fp-inline-button {
-          margin-left: 12px;
-          border: none;
-          background: transparent;
-          color: inherit;
-          font-weight: 800;
-          text-decoration: underline;
-          cursor: pointer;
+        .fp-actions {
+          margin: 25px 0;
         }
 
         .fp-help {
           font-size: 12px;
           line-height: 1.6;
-        }
-
-        .fp-footer-actions {
-          margin: 25px 0;
         }
 
         @media (max-width: 650px) {
