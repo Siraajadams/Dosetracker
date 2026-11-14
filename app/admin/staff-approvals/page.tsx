@@ -275,8 +275,9 @@ export default function StaffApprovals() {
         .select(
           "id,full_name,email,role,sanc_number,professional_category,approval_status,is_active,email_verified_at"
         )
-        .eq("role", "nurse")
-        .order("created_at", { ascending: false });
+.eq("role", "nurse")
+.neq("approval_status", "rejected")
+.order("created_at", { ascending: false });
 
       if (error) throw error;
 
@@ -307,11 +308,11 @@ export default function StaffApprovals() {
         p.approval_status === "approved" &&
         p.is_active
     ).length,
-    rejected: staff.filter(
-      p =>
-        p.approval_status === "rejected" ||
-        p.approval_status === "suspended"
-    ).length,
+    
+rejected: staff.filter(
+  p => p.approval_status === "suspended"
+).length,
+
   }), [staff]);
 
   const visible = useMemo(() => {
@@ -540,7 +541,7 @@ export default function StaffApprovals() {
               </div>
 
               <div className="staff-metric">
-                <label>Rejected / Suspended</label>
+                <label>Suspended Accounts</label>
                 <strong>{counts.rejected}</strong>
               </div>
             </div>
