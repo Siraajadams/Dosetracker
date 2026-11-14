@@ -2,11 +2,16 @@
 "use client";
 
 import {
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
 } from "react";
 import Link from "next/link";
+import {
+  Turnstile,
+  type TurnstileInstance,
+} from "@marsidev/react-turnstile";
 import { supabase } from "@/lib/supabaseClient";
 
 const provinces = [
@@ -66,6 +71,23 @@ const heading: CSSProperties = {
   color: "#172d36",
 };
 
+const visibilityButton: CSSProperties = {
+  position: "absolute",
+  right: 10,
+  top: "50%",
+  transform: "translateY(-50%)",
+  border: "none",
+  background: "#e2e8f0",
+  color: "#334155",
+  padding: "8px 12px",
+  borderRadius: 6,
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const siteKey =
+  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
+
 export default function RegisterHealthcareProvider() {
   const [firstName, setFirstName] = useState("");
   const [surname, setSurname] = useState("");
@@ -78,7 +100,8 @@ export default function RegisterHealthcareProvider() {
   const [category, setCategory] =
     useState("registered_nurse");
 
-  const [healthcareSite, setHealthcareSite] = useState("");
+  const [healthcareSite, setHealthcareSite] =
+    useState("");
   const [address, setAddress] = useState("");
   const [province, setProvince] = useState("");
 
@@ -86,44 +109,91 @@ export default function RegisterHealthcareProvider() {
   const [confirmPassword, setConfirmPassword] =
     useState("");
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] =
+  const [showPassword, setShowPassword] =
     useState(false);
+
+  const [
+    showConfirmPassword,
+    setShowConfirmPassword,
+  ] = useState(false);
+
+  const [captchaToken, setCaptchaToken] =
+    useState("");
+
+  const [captchaError, setCaptchaError] =
+    useState("");
+
+  const captchaRef =
+    useRef<TurnstileInstance | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState(false);
 
-  const selectedProfession =
-    professions.find((p) => p.value === category);
+  const selectedProfession = professions.find(
+    (p) => p.value === category
+  );
 
-  const council = selectedProfession?.council ?? "SANC";
+  const council =
+    selectedProfession?.council ?? "SANC";
 
-  async function submit(e: FormEvent<HTMLFormElement>) {
+  function resetCaptcha() {
+    setCaptchaToken("");
+    captchaRef.current?.reset();
+  }
+
+  async function submit(
+    e: FormEvent<HTMLFormElement>
+  ) {
     e.preventDefault();
+
+    if (busy || success) return;
 
     setMessage("");
     setSuccess(false);
 
-    if (!firstName.trim() || !surname.trim()) {
+    const cleanedFirstName = firstName.trim();
+    const cleanedSurname = surname.trim();
+    const cleanedEmail = email.trim().toLowerCase();
+    const cleanedMobile = mobile.trim();
+    const cleanedRegistration =
+      registrationNumber.trim();
+    const cleanedSite = healthcareSite.trim();
+    const cleanedAddress = address.trim();
+
+    if (!cleanedFirstName || !cleanedSurname) {
       setMessage("Please enter your full name.");
       return;
     }
 
-    if (!email.trim()) {
+    if (!cleanedEmail) {
       setMessage("Please enter your email address.");
       return;
     }
 
-    if (!registrationNumber.trim()) {
+    if (!cleanedMobile) {
+      setMessage("Please enter your mobile number.");
+      return;
+    }
+
+    if (!cleanedRegistration) {
       setMessage(
         "Please enter your healthcare provider registration number."
       );
       return;
     }
 
-    if (!healthcareSite.trim()) {
-      setMessage("Please enter your healthcare site name.");
+    if (!cleanedSite) {
+      setMessage(
+        "Please enter your healthcare site name."
+      );
+      return;
+    }
+
+    if (!cleanedAddress) {
+      setMessage(
+        "Please enter your healthcare site address."
+      );
       return;
     }
 
@@ -144,51 +214,70 @@ export default function RegisterHealthcareProvider() {
       return;
     }
 
+    // CAPTCHA must be configured before signup.
+    if (!siteKey) {
+      setMessage(
+        "Registration security is not configured. " +
+          "Please contact the administrator."
+      );
+      return;
+    }
+
+    if (!captchaToken) {
+      setMessage(
+        "Please complete the security verification " +
+          "before registering."
+      );
+      return;
+    }
+
     setBusy(true);
 
     try {
       const fullName =
-        `${firstName.trim()} ${surname.trim()}`;
+        `${cleanedFirstName} ${cleanedSurname}`;
 
       const { error } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
+        email: cleanedEmail,
         password,
         options: {
+          // Supabase verifies this token when
+          // CAPTCHA protection is enabled.
+          captchaToken,
+
           emailRedirectTo:
             `${window.location.origin}/pending-approval`,
 
           data: {
             full_name: fullName,
-            first_name: firstName.trim(),
-            surname: surname.trim(),
-            mobile_number: mobile.trim(),
+            first_name: cleanedFirstName,
+            surname: cleanedSurname,
+            mobile_number: cleanedMobile,
 
-            // Existing field retained for compatibility
-            // with the current Supabase registration trigger.
-            sanc_number: registrationNumber.trim(),
+            // Existing field retained for
+            // compatibility with Supabase triggers.
+            sanc_number: cleanedRegistration,
 
-            // Additional professional registration metadata
             healthcare_registration_number:
-              registrationNumber.trim(),
+              cleanedRegistration,
 
             registration_council: council,
 
             professional_category: category,
 
             // Existing pharmacy metadata retained
-            // for compatibility with existing workflows.
-            requested_pharmacy_name:
-              healthcareSite.trim(),
+            // for backwards compatibility.
+            requested_pharmacy_name: cleanedSite,
 
             requested_pharmacy_address:
-              address.trim(),
+              cleanedAddress,
 
-            // New healthcare site metadata
+            // Healthcare site metadata.
             requested_healthcare_site_name:
-              healthcareSite.trim(),
+              cleanedSite,
 
             requested_healthcare_site_address:
-              address.trim(),
+              cleanedAddress,
 
             requested_province: province,
           },
@@ -197,6 +286,7 @@ export default function RegisterHealthcareProvider() {
 
       if (error) {
         setMessage(error.message);
+        resetCaptcha();
         return;
       }
 
@@ -204,17 +294,23 @@ export default function RegisterHealthcareProvider() {
 
       setMessage(
         "Healthcare registration submitted. " +
-        "Please check your email for verification. " +
-        `${council} registration verification and ` +
-        "Super Admin approval are required before " +
-        "clinical access is enabled."
+          "Please check your email for verification. " +
+          `${council} registration verification and ` +
+          "Super Admin approval are required before " +
+          "clinical access is enabled."
       );
-    } catch (err) {
+
+      setPassword("");
+      setConfirmPassword("");
+      setCaptchaToken("");
+    } catch (err: unknown) {
       setMessage(
         err instanceof Error
           ? err.message
           : "Registration failed. Please try again."
       );
+
+      resetCaptcha();
     } finally {
       setBusy(false);
     }
@@ -237,7 +333,8 @@ export default function RegisterHealthcareProvider() {
           padding: 28,
           background: "white",
           borderRadius: 16,
-          boxShadow: "0 8px 28px rgba(0,0,0,0.06)",
+          boxShadow:
+            "0 8px 28px rgba(0,0,0,0.06)",
         }}
       >
         <div
@@ -280,13 +377,16 @@ export default function RegisterHealthcareProvider() {
             gap: 13,
           }}
         >
-          <h3 style={heading}>Personal details</h3>
+          <h3 style={heading}>
+            Personal details
+          </h3>
 
           <input
             required
             style={input}
             placeholder="First name"
             autoComplete="given-name"
+            maxLength={100}
             value={firstName}
             onChange={(e) =>
               setFirstName(e.target.value)
@@ -298,6 +398,7 @@ export default function RegisterHealthcareProvider() {
             style={input}
             placeholder="Surname"
             autoComplete="family-name"
+            maxLength={100}
             value={surname}
             onChange={(e) =>
               setSurname(e.target.value)
@@ -310,6 +411,7 @@ export default function RegisterHealthcareProvider() {
             type="email"
             placeholder="Email address"
             autoComplete="email"
+            maxLength={254}
             value={email}
             onChange={(e) =>
               setEmail(e.target.value)
@@ -322,6 +424,7 @@ export default function RegisterHealthcareProvider() {
             type="tel"
             placeholder="Mobile number"
             autoComplete="tel"
+            maxLength={30}
             value={mobile}
             onChange={(e) =>
               setMobile(e.target.value)
@@ -344,9 +447,10 @@ export default function RegisterHealthcareProvider() {
             required
             style={input}
             value={category}
-            onChange={(e) =>
-              setCategory(e.target.value)
-            }
+            onChange={(e) => {
+              setCategory(e.target.value);
+              setRegistrationNumber("");
+            }}
           >
             {professions.map((profession) => (
               <option
@@ -369,6 +473,7 @@ export default function RegisterHealthcareProvider() {
             id="registration-number"
             required
             style={input}
+            maxLength={60}
             placeholder={`${council} registration number`}
             value={registrationNumber}
             onChange={(e) =>
@@ -387,13 +492,14 @@ export default function RegisterHealthcareProvider() {
             }}
           >
             <strong>
-              Professional registration authority:
-              {" "}{council}
+              Professional registration authority:{" "}
+              {council}
             </strong>
 
             <div>
-              Your registration will be reviewed
-              by the Super Administrator before
+              Your professional registration
+              details must be verified by the
+              Super Administrator before
               clinical access is granted.
             </div>
           </div>
@@ -405,6 +511,7 @@ export default function RegisterHealthcareProvider() {
           <input
             required
             style={input}
+            maxLength={200}
             placeholder="Name of healthcare site"
             value={healthcareSite}
             onChange={(e) =>
@@ -419,6 +526,7 @@ export default function RegisterHealthcareProvider() {
               resize: "vertical",
             }}
             rows={3}
+            maxLength={500}
             placeholder={
               "Healthcare site street address, " +
               "suburb, city and postal code"
@@ -468,7 +576,9 @@ export default function RegisterHealthcareProvider() {
                 paddingRight: 90,
               }}
               type={
-                showPassword ? "text" : "password"
+                showPassword
+                  ? "text"
+                  : "password"
               }
               minLength={12}
               placeholder="Password (12+ characters)"
@@ -555,18 +665,118 @@ export default function RegisterHealthcareProvider() {
             12 characters.
           </p>
 
+          <h3 style={heading}>
+            Security verification
+          </h3>
+
+          <div
+            style={{
+              border: "1px solid #dbe4ee",
+              borderRadius: 10,
+              padding: 16,
+              background: "#f8fafc",
+              overflowX: "auto",
+            }}
+          >
+            <p
+              style={{
+                marginTop: 0,
+                fontSize: 13,
+                color: "#475569",
+              }}
+            >
+              Complete the security check
+              before submitting your application.
+            </p>
+
+            {siteKey ? (
+              <Turnstile
+                ref={captchaRef}
+                siteKey={siteKey}
+                options={{
+                  theme: "light",
+                  size: "normal",
+                }}
+                onSuccess={(token) => {
+                  setCaptchaToken(token);
+                  setCaptchaError("");
+                }}
+                onExpire={() => {
+                  setCaptchaToken("");
+                  setCaptchaError(
+                    "Security verification expired. " +
+                      "Please complete it again."
+                  );
+                }}
+                onError={() => {
+                  setCaptchaToken("");
+                  setCaptchaError(
+                    "Security verification failed. " +
+                      "Please retry."
+                  );
+                }}
+              />
+            ) : (
+              <p
+                style={{
+                  color: "#b91c1c",
+                  fontWeight: 600,
+                }}
+              >
+                Security verification is not
+                configured. Registration is
+                temporarily unavailable.
+              </p>
+            )}
+
+            {captchaToken && (
+              <p
+                style={{
+                  color: "#047857",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                Security verification completed.
+              </p>
+            )}
+
+            {captchaError && (
+              <p
+                role="alert"
+                style={{
+                  color: "#b91c1c",
+                  fontSize: 12,
+                }}
+              >
+                {captchaError}
+              </p>
+            )}
+          </div>
+
           <button
-            disabled={busy || success}
+            disabled={
+              busy ||
+              success ||
+              !siteKey ||
+              !captchaToken
+            }
             type="submit"
             style={{
               ...input,
               background:
-                busy || success
+                busy ||
+                success ||
+                !siteKey ||
+                !captchaToken
                   ? "#94a3b8"
                   : "#0f766e",
               color: "white",
               cursor:
-                busy || success
+                busy ||
+                success ||
+                !siteKey ||
+                !captchaToken
                   ? "not-allowed"
                   : "pointer",
               fontWeight: 700,
@@ -618,17 +828,3 @@ export default function RegisterHealthcareProvider() {
     </main>
   );
 }
-
-const visibilityButton: CSSProperties = {
-  position: "absolute",
-  right: 10,
-  top: "50%",
-  transform: "translateY(-50%)",
-  border: "none",
-  background: "#e2e8f0",
-  color: "#334155",
-  padding: "8px 12px",
-  borderRadius: 6,
-  cursor: "pointer",
-  fontWeight: 700,
-};
