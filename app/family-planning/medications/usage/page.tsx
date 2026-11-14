@@ -581,9 +581,9 @@ export default function ContraceptiveUsagePage() {
         </div>
 
         <div className="actions">
-          <Link href="/family-planning/medications">
-            Medication Catalogue
-          </Link>
+          <Link href="/admin/medications">
+  Medication Catalogue
+</Link>
 
           <button
             onClick={() => void load()}
