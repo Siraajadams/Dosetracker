@@ -1,3 +1,4 @@
+
 {
   "scripts": {
     "dev": "next dev",
@@ -5,6 +6,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@marsidev/react-turnstile": "^1.4.1",
     "@supabase/supabase-js": "latest",
     "next": "latest",
     "react": "latest",
