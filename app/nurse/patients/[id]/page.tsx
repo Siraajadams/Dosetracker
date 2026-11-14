@@ -60,7 +60,6 @@ function formatDate(value: string | null) {
   if (!value) return "Not recorded";
 
   const parts = value.split("-");
-
   if (parts.length !== 3) return value;
 
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
@@ -159,7 +158,7 @@ export default function PatientRecordPage() {
 
       const siteIds = [
         ...new Set(
-          (assignments || []).map(item => item.site_id)
+          (assignments || []).map((item) => item.site_id)
         ),
       ].filter(Boolean);
 
@@ -170,21 +169,30 @@ export default function PatientRecordPage() {
       }
 
       // 3. Load patient only when assigned to its clinic.
-      const { data: record, error: patientError } = await supabase
-        .from("patients")
-        .select(`
-          id, patient_clinic_id, site_id, first_name, surname,
-          id_number, passport_number, date_of_birth, gender,
-          mobile_number, email, address, suburb, city, province,
-          postal_code
-        `)
-        .eq("id", patientId)
-        .in("site_id", siteIds)
-        .maybeSingle();
+      const { data: record, error: patientError } =
+        await supabase
+          .from("patients")
+          .select(`
+            id, patient_clinic_id, site_id,
+            first_name, surname,
+            id_number, passport_number,
+            date_of_birth, gender,
+            mobile_number, email,
+            address, suburb, city,
+            province, postal_code
+          `)
+          .eq("id", patientId)
+          .in("site_id", siteIds)
+          .maybeSingle();
 
-      if (patientError) throw new Error(patientError.message);
+      if (patientError) {
+        throw new Error(patientError.message);
+      }
+
       if (!record?.site_id) {
-        throw new Error("Patient not found or access is not authorised.");
+        throw new Error(
+          "Patient not found or access is not authorised."
+        );
       }
 
       // 4. Confirm that the clinic is active.
@@ -306,7 +314,9 @@ export default function PatientRecordPage() {
               >
                 <Detail
                   label="Patient Reference"
-                  value={display(patient.patient_clinic_id)}
+                  value={display(
+                    patient.patient_clinic_id
+                  )}
                 />
                 <Detail
                   label="Clinic"
@@ -314,7 +324,9 @@ export default function PatientRecordPage() {
                 />
                 <Detail
                   label="Date of Birth"
-                  value={formatDate(patient.date_of_birth)}
+                  value={formatDate(
+                    patient.date_of_birth
+                  )}
                 />
                 <Detail
                   label="Gender"
@@ -330,9 +342,12 @@ export default function PatientRecordPage() {
                 label="South African ID"
                 value={display(patient.id_number)}
               />
+
               <Detail
                 label="Passport Number"
-                value={display(patient.passport_number)}
+                value={display(
+                  patient.passport_number
+                )}
               />
             </section>
 
@@ -341,8 +356,11 @@ export default function PatientRecordPage() {
 
               <Detail
                 label="Contact Number"
-                value={display(patient.mobile_number)}
+                value={display(
+                  patient.mobile_number
+                )}
               />
+
               <Detail
                 label="Email Address"
                 value={display(patient.email)}
@@ -356,61 +374,66 @@ export default function PatientRecordPage() {
                 label="Street Address"
                 value={display(patient.address)}
               />
+
               <Detail
                 label="Suburb"
                 value={display(patient.suburb)}
               />
+
               <Detail
                 label="City / Town"
                 value={display(patient.city)}
               />
+
               <Detail
                 label="Province"
                 value={display(patient.province)}
               />
+
               <Detail
                 label="Postal Code"
-                value={display(patient.postal_code)}
+                value={display(
+                  patient.postal_code
+                )}
               />
             </section>
 
-            
-<section style={card}>
-  <h2>Clinical Services</h2>
+            <section style={card}>
+              <h2>Clinical Services</h2>
 
-  <p style={{ color: "#64748b" }}>
-    Record medication administration, review
-    previous treatments and manage follow-up
-    appointments.
-  </p>
+              <p style={{ color: "#64748b" }}>
+                Record medication administration,
+                review previous treatments and
+                manage follow-up appointments.
+              </p>
 
-  <button
-    type="button"
-    style={{
-      ...button,
-      marginTop: 12,
-      marginBottom: 12,
-    }}
-    onClick={() => {
-      router.push(
-        `/nurse/patients/${patient.id}/administration`
-      );
-    }}
-  >
-    Record Medication Administration
-  </button>
+              <button
+                type="button"
+                style={{
+                  ...button,
+                  marginTop: 12,
+                  marginBottom: 12,
+                }}
+                onClick={() => {
+                  router.push(
+                    `/nurse/patients/${patient.id}/administration/new`
+                  );
+                }}
+              >
+                + Record Medication Administration
+              </button>
 
-  <p
-    style={{
-      fontSize: 13,
-      color: "#64748b",
-    }}
-  >
-    Includes contraceptive injections, GLP-1
-    treatments, vaccinations and long-acting PrEP.
-  </p>
-</section>
-
+              <p
+                style={{
+                  fontSize: 13,
+                  color: "#64748b",
+                }}
+              >
+                Record multiple contraceptive products,
+                including injections, oral contraceptives,
+                implants and condoms, with follow-up dates.
+              </p>
+            </section>
           </>
         )}
       </div>
