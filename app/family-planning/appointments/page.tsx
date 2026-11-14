@@ -1,9 +1,30 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+
+type Clinic = {
+  id: string;
+  site_name: string;
+};
+
+type Patient = {
+  id: string;
+  site_id: string;
+  first_name: string | null;
+  surname: string | null;
+  id_number: string | null;
+  passport_number: string | null;
+};
 
 type Appointment = {
   id: string;
@@ -14,31 +35,12 @@ type Appointment = {
   appointment_type: string;
   status: string;
   notes: string | null;
+  interval_days: number | null;
+  reminder_days: number | null;
+  administration_id: string | null;
 };
 
-type Patient = {
-  id: string;
-  first_name: string;
-  surname: string;
-  id_number?: string | null;
-};
-
-type Facility = {
-  id: string;
-  name: string;
-};
-
-const TYPES = [
-  "Family Planning",
-  "Contraceptive Injection",
-  "Contraceptive Implant",
-  "Oral Contraceptive",
-  "Follow-up",
-  "Counselling",
-  "Other",
-];
-
-const STATUSES = [
+const statusOptions = [
   "scheduled",
   "confirmed",
   "completed",
@@ -46,44 +48,166 @@ const STATUSES = [
   "missed",
 ];
 
-function todayISO() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+function localToday() {
+  const d = new Date();
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error !== null) {
-    const obj = error as { message?: string };
-    return obj.message || "An unexpected error occurred.";
+function addDays(date: string, days: number) {
+  if (!date) return "";
+  const d = new Date(`${date}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function daysBetween(from: string, to: string) {
+  const a = Date.parse(`${from}T12:00:00Z`);
+  const b = Date.parse(`${to}T12:00:00Z`);
+  return Math.round((b - a) / 86400000);
+}
+
+function formatDate(value: string) {
+  if (!value) return "—";
+  return new Date(`${value}T12:00:00Z`).toLocaleDateString(
+    "en-ZA",
+    {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }
+  );
+}
+
+function getError(error: unknown) {
+  if (error && typeof error === "object") {
+    const e = error as {
+      message?: string;
+      code?: string;
+      details?: string;
+    };
+    return [e.message, e.code, e.details]
+      .filter(Boolean)
+      .join(" — ");
   }
   return String(error);
 }
 
-export default function FamilyPlanningAppointmentsPage() {
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+function patientName(patient?: Patient) {
+  if (!patient) return "Patient unavailable";
+  return (
+    [patient.first_name, patient.surname]
+      .filter(Boolean)
+      .join(" ") || "Unnamed patient"
+  );
+}
 
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+function Countdown({
+  appointment,
+}: {
+  appointment: Appointment;
+}) {
+  if (
+    appointment.status === "completed" ||
+    appointment.status === "cancelled"
+  ) {
+    return (
+      <span className="dt-pill neutral">
+        {appointment.status}
+      </span>
+    );
+  }
+
+  const remaining = daysBetween(
+    localToday(),
+    appointment.appointment_date
+  );
+  const reminderDays = appointment.reminder_days ?? 4;
+
+  if (remaining < 0) {
+    return (
+      <span className="dt-pill danger">
+        {Math.abs(remaining)} days overdue
+      </span>
+    );
+  }
+
+  if (remaining === 0) {
+    return <span className="dt-pill danger">Due today</span>;
+  }
+
+  if (remaining <= reminderDays) {
+    return (
+      <span className="dt-pill warning">
+        Reminder · {remaining} days left
+      </span>
+    );
+  }
+
+  return (
+    <span className="dt-pill good">
+      {remaining} days remaining
+    </span>
+  );
+}
+
+export default function AppointmentsPage() {
+  const router = useRouter();
+
+  const [clinics, setClinics] = useState<Clinic[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [appointments, setAppointments] =
+    useState<Appointment[]>([]);
 
-  const [selectedFacility, setSelectedFacility] = useState("");
-  const [selectedDate, setSelectedDate] = useState(todayISO());
+  const [clinicId, setClinicId] = useState("");
+  const [patientId, setPatientId] = useState("");
+
+  const [viewDate, setViewDate] = useState(localToday());
+  const [administrationDate, setAdministrationDate] =
+    useState(localToday());
+
+  const [interval, setInterval] = useState("56");
+  const [customDays, setCustomDays] = useState("42");
+  const [reminderDays, setReminderDays] = useState("4");
+  const [bookingTime, setBookingTime] = useState("09:00");
+  const [appointmentType, setAppointmentType] =
+    useState("Contraceptive Follow-up");
+  const [notes, setNotes] = useState("");
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
+  const [showAllUpcoming, setShowAllUpcoming] =
+    useState(false);
 
-  const [patientId, setPatientId] = useState("");
-  const [appointmentDate, setAppointmentDate] = useState(todayISO());
-  const [appointmentTime, setAppointmentTime] = useState("09:00");
-  const [appointmentType, setAppointmentType] = useState(TYPES[0]);
-  const [notes, setNotes] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [updatingId, setUpdatingId] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const selectedInterval =
+    interval === "custom"
+      ? Number(customDays)
+      : Number(interval);
+
+  const validInterval =
+    Number.isInteger(selectedInterval) &&
+    selectedInterval >= 1 &&
+    selectedInterval <= 365;
+
+  const nextDate = validInterval
+    ? addDays(administrationDate, selectedInterval)
+    : "";
+
+  const reminderDate = nextDate
+    ? addDays(nextDate, -Number(reminderDays || 0))
+    : "";
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -94,757 +218,1325 @@ export default function FamilyPlanningAppointmentsPage() {
         await supabase.auth.getUser();
 
       if (authError || !auth.user) {
-        throw new Error("Please log in to access appointments.");
-      }
-
-      // Only facilities assigned to the signed-in user.
-      const { data: memberships, error: membershipError } =
-        await supabase
-          .from("fp_memberships")
-          .select("facility_id")
-          .eq("user_id", auth.user.id)
-          .eq("active", true);
-
-      if (membershipError) throw membershipError;
-
-      const facilityIds = Array.from(
-        new Set(
-          (memberships || [])
-            .map((m) => m.facility_id)
-            .filter(Boolean)
-        )
-      );
-
-      if (facilityIds.length === 0) {
-        setFacilities([]);
-        setPatients([]);
-        setAppointments([]);
-        setError(
-          "No active clinic assignment found. Contact the administrator."
-        );
+        router.replace("/family-planning/login");
         return;
       }
 
-      const [facilityResult, patientResult, appointmentResult] =
+      const userId = auth.user.id;
+
+      const [nurseAssignments, memberships] =
         await Promise.all([
           supabase
-            .from("fp_facilities")
-            .select("id, name")
-            .in("id", facilityIds),
+            .from("nurse_site_assignments")
+            .select("site_id")
+            .eq("nurse_id", userId),
 
           supabase
-            .from("fp_patients")
-            .select("id, first_name, surname, id_number")
+            .from("fp_memberships")
+            .select("facility_id")
+            .eq("user_id", userId)
+            .eq("active", true),
+        ]);
+
+      if (nurseAssignments.error) {
+        throw nurseAssignments.error;
+      }
+      if (memberships.error) {
+        throw memberships.error;
+      }
+
+      const assignedIds = Array.from(
+        new Set(
+          [
+            ...(nurseAssignments.data || []).map(
+              (a) => a.site_id
+            ),
+            ...(memberships.data || []).map(
+              (m) => m.facility_id
+            ),
+          ].filter((id): id is string => Boolean(id))
+        )
+      );
+
+      if (assignedIds.length === 0) {
+        setClinics([]);
+        setPatients([]);
+        setAppointments([]);
+        throw new Error(
+          "No assigned clinic found for your account."
+        );
+      }
+
+      const siteResult = await supabase
+        .from("sites")
+        .select("id,site_name")
+        .in("id", assignedIds)
+        .eq("is_active", true)
+        .order("site_name");
+
+      if (siteResult.error) throw siteResult.error;
+
+      const activeClinics =
+        (siteResult.data || []) as Clinic[];
+      const activeIds = activeClinics.map((c) => c.id);
+
+      if (activeIds.length === 0) {
+        throw new Error("No active assigned clinics found.");
+      }
+
+      const [patientResult, appointmentResult] =
+        await Promise.all([
+          supabase
+            .from("patients")
+            .select(
+              "id,site_id,first_name,surname,id_number,passport_number"
+            )
+            .in("site_id", activeIds)
+            .order("surname")
             .limit(1000),
 
           supabase
             .from("fp_appointments")
-            .select("*")
-            .in("facility_id", facilityIds)
-            .order("appointment_date", { ascending: true }),
+            .select(
+              "id,patient_id,facility_id,appointment_date,appointment_time,appointment_type,status,notes,interval_days,reminder_days,administration_id"
+            )
+            .in("facility_id", activeIds)
+            .order("appointment_date")
+            .order("appointment_time")
+            .limit(1000),
         ]);
 
-      if (facilityResult.error) throw facilityResult.error;
       if (patientResult.error) throw patientResult.error;
-      if (appointmentResult.error) throw appointmentResult.error;
+      if (appointmentResult.error) {
+        throw appointmentResult.error;
+      }
 
-      const clinicRows = (facilityResult.data || []) as Facility[];
-
-      setFacilities(clinicRows);
+      setClinics(activeClinics);
       setPatients((patientResult.data || []) as Patient[]);
       setAppointments(
         (appointmentResult.data || []) as Appointment[]
       );
 
-      setSelectedFacility((current) =>
-        clinicRows.some((f) => f.id === current)
+      setClinicId((current) =>
+        activeIds.includes(current)
           ? current
-          : clinicRows[0]?.id || ""
+          : activeIds[0]
       );
     } catch (err) {
-      setError(errorMessage(err));
+      setError(getError(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
-  const patientMap = useMemo(() => {
-    return new Map(patients.map((patient) => [patient.id, patient]));
-  }, [patients]);
+  const patientMap = useMemo(
+    () => new Map(patients.map((p) => [p.id, p])),
+    [patients]
+  );
 
-  const facilityMap = useMemo(() => {
-    return new Map(facilities.map((facility) => [facility.id, facility]));
-  }, [facilities]);
+  const clinicPatients = useMemo(
+    () => patients.filter((p) => p.site_id === clinicId),
+    [patients, clinicId]
+  );
 
-  const filteredAppointments = useMemo(() => {
-    return appointments.filter((appointment) => {
-      if (
-        selectedFacility &&
-        appointment.facility_id !== selectedFacility
-      ) {
-        return false;
-      }
+  const clinicAppointments = useMemo(
+    () =>
+      appointments.filter(
+        (a) => a.facility_id === clinicId
+      ),
+    [appointments, clinicId]
+  );
 
-      if (
-        selectedDate &&
-        appointment.appointment_date !== selectedDate
-      ) {
-        return false;
-      }
+  const today = localToday();
+
+  const activeAppointments = useMemo(
+    () =>
+      clinicAppointments.filter(
+        (a) =>
+          a.status !== "completed" &&
+          a.status !== "cancelled"
+      ),
+    [clinicAppointments]
+  );
+
+  const upcoming = useMemo(
+    () =>
+      activeAppointments
+        .filter((a) => a.appointment_date >= today)
+        .sort((a, b) =>
+          (
+            a.appointment_date + a.appointment_time
+          ).localeCompare(
+            b.appointment_date + b.appointment_time
+          )
+        ),
+    [activeAppointments, today]
+  );
+
+  const overdue = useMemo(
+    () =>
+      activeAppointments.filter(
+        (a) => a.appointment_date < today
+      ),
+    [activeAppointments, today]
+  );
+
+  const reminders = useMemo(
+    () =>
+      upcoming.filter((a) => {
+        const days = daysBetween(
+          today,
+          a.appointment_date
+        );
+        return days <= (a.reminder_days ?? 4);
+      }),
+    [upcoming, today]
+  );
+
+  const daily = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    return clinicAppointments.filter((a) => {
+      if (a.appointment_date !== viewDate) return false;
 
       if (
         statusFilter !== "all" &&
-        appointment.status !== statusFilter
+        a.status !== statusFilter
       ) {
         return false;
       }
 
-      const patient = patientMap.get(appointment.patient_id);
+      const patient = patientMap.get(a.patient_id);
 
       const searchable = [
-        patient?.first_name,
-        patient?.surname,
+        patientName(patient),
         patient?.id_number,
-        appointment.appointment_type,
+        patient?.passport_number,
+        a.appointment_type,
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
 
-      return searchable.includes(search.toLowerCase());
+      return searchable.includes(q);
     });
   }, [
-    appointments,
-    selectedFacility,
-    selectedDate,
+    clinicAppointments,
+    viewDate,
     statusFilter,
     search,
     patientMap,
   ]);
 
-  const counts = useMemo(() => {
-    const rows = appointments.filter(
-      (a) =>
-        (!selectedFacility || a.facility_id === selectedFacility) &&
-        a.appointment_date === selectedDate
-    );
-
-    return {
-      total: rows.length,
-      scheduled: rows.filter((a) => a.status === "scheduled").length,
-      completed: rows.filter((a) => a.status === "completed").length,
-      cancelled: rows.filter((a) => a.status === "cancelled").length,
-    };
-  }, [appointments, selectedFacility, selectedDate]);
-
-  async function createAppointment(e: React.FormEvent) {
-    e.preventDefault();
-    setMessage("");
+  async function saveAppointment(
+    event: FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
     setError("");
+    setMessage("");
 
-    if (!selectedFacility || !patientId) {
-      setError("Please select a clinic and patient.");
+    if (!validInterval || !nextDate) {
+      setError("Enter a valid interval between 1 and 365 days.");
       return;
     }
 
-    if (!appointmentDate || !appointmentTime) {
-      setError("Please select an appointment date and time.");
+    if (nextDate < today) {
+      setError("The follow-up date cannot be in the past.");
+      return;
+    }
+
+    const patient = clinicPatients.find(
+      (p) => p.id === patientId
+    );
+
+    if (!patient) {
+      setError("Select a patient at the assigned clinic.");
       return;
     }
 
     setSaving(true);
 
     try {
+      const { data: auth, error: authError } =
+        await supabase.auth.getUser();
+
+      if (authError || !auth.user) {
+        throw new Error("Your session has expired.");
+      }
+
       const { error: insertError } = await supabase
         .from("fp_appointments")
         .insert({
-          facility_id: selectedFacility,
           patient_id: patientId,
-          appointment_date: appointmentDate,
-          appointment_time: appointmentTime,
+          facility_id: clinicId,
+          appointment_date: nextDate,
+          appointment_time: bookingTime,
           appointment_type: appointmentType,
           status: "scheduled",
           notes: notes.trim() || null,
+          interval_days: selectedInterval,
+          reminder_days: Number(reminderDays),
         });
 
       if (insertError) throw insertError;
 
-      setMessage("Appointment created successfully.");
       setShowForm(false);
       setPatientId("");
       setNotes("");
-      setSelectedDate(appointmentDate);
+      setViewDate(nextDate);
 
       await loadData();
+      setMessage("Follow-up appointment saved successfully.");
     } catch (err) {
-      setError(errorMessage(err));
+      setError(getError(err));
     } finally {
       setSaving(false);
     }
   }
 
-  async function updateStatus(id: string, status: string) {
+  async function changeStatus(
+    appointment: Appointment,
+    status: string
+  ) {
+    setUpdatingId(appointment.id);
     setError("");
     setMessage("");
 
     try {
       const { error: updateError } = await supabase
         .from("fp_appointments")
-        .update({ status })
-        .eq("id", id);
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", appointment.id)
+        .eq("facility_id", clinicId);
 
       if (updateError) throw updateError;
 
-      setAppointments((current) =>
-        current.map((appointment) =>
-          appointment.id === id
-            ? { ...appointment, status }
-            : appointment
-        )
-      );
-
+      await loadData();
       setMessage("Appointment status updated.");
     } catch (err) {
-      setError(errorMessage(err));
+      setError(getError(err));
+    } finally {
+      setUpdatingId("");
     }
   }
 
+  function changeViewDate(days: number) {
+    setViewDate((current) => addDays(current, days));
+  }
+
   return (
-    <main className="fp-page">
-      <div className="fp-container">
-        <header className="fp-header">
+    <div className="dt-app">
+      <aside className="dt-sidebar">
+        <div className="dt-brand">
+          <span className="dt-brand-icon">✳</span>
           <div>
-            <p className="fp-eyebrow">DOSETRACK · FAMILY PLANNING</p>
-            <h1>Appointments</h1>
-            <p className="fp-subtitle">
-              Schedule, review and manage patient appointments.
-            </p>
+            <strong>DoseTrack</strong>
+            <small>FAMILY PLANNING</small>
           </div>
+        </div>
 
-          <div className="fp-actions">
-            <Link
-              href="/family-planning/dashboard"
-              className="fp-button secondary"
-            >
-              Dashboard
-            </Link>
+        <p className="dt-side-heading">CLINICAL WORKSPACE</p>
 
-            <button
-              className="fp-button secondary"
-              onClick={() => void loadData()}
-            >
-              Refresh
-            </button>
+        <nav>
+          <Link href="/family-planning/dashboard">
+            ▦ Dashboard
+          </Link>
+          <Link href="/family-planning/patients">
+            ♧ Patient Management
+          </Link>
+          <Link href="/nurse/patients/new">
+            + Register Patient
+          </Link>
+          <Link
+            href="/family-planning/appointments"
+            className="active"
+          >
+            ▣ Appointments & Follow-ups
+          </Link>
+          <Link href="/family-planning/medications/usage">
+            ◫ Contraceptive Analytics
+          </Link>
+        </nav>
+      </aside>
 
-            <button
-              className="fp-button primary"
-              onClick={() => setShowForm(!showForm)}
-            >
-              {showForm ? "Close Form" : "+ New Appointment"}
-            </button>
-          </div>
+      <main className="dt-main">
+        <header className="dt-topbar">
+          <span>Family Planning / Appointments</span>
+          <Link href="/family-planning/dashboard">
+            Back to Dashboard
+          </Link>
         </header>
 
-        {error && <div className="fp-alert error">{error}</div>}
-        {message && <div className="fp-alert success">{message}</div>}
+        <div className="dt-content">
+          <section className="dt-hero">
+            <span className="dt-chip">
+              FAMILY PLANNING SCHEDULING
+            </span>
+            <h1>Appointments & Follow-ups</h1>
+            <p>
+              Schedule 28, 56 or 84-day follow-ups, customise
+              intervals, and monitor patients approaching
+              their next appointment.
+            </p>
+          </section>
 
-        <section className="fp-card">
-          <div className="fp-filter-grid">
-            <label>
-              Clinic
-              <select
-                value={selectedFacility}
-                onChange={(e) => setSelectedFacility(e.target.value)}
+          {error && (
+            <div className="dt-alert error" role="alert">
+              {error}
+            </div>
+          )}
+
+          {message && (
+            <div className="dt-alert success" role="status">
+              {message}
+            </div>
+          )}
+
+          <section className="dt-panel">
+            <div className="dt-heading">
+              <div>
+                <span className="dt-eyebrow">CLINIC SELECTION</span>
+                <h2>Appointment Workspace</h2>
+              </div>
+              <button
+                type="button"
+                className="dt-btn outline"
+                onClick={() => void loadData()}
               >
-                {facilities.map((facility) => (
-                  <option key={facility.id} value={facility.id}>
-                    {facility.name}
+                Refresh
+              </button>
+            </div>
+
+            <label className="dt-field">
+              Assigned clinic
+              <select
+                value={clinicId}
+                onChange={(e) => {
+                  setClinicId(e.target.value);
+                  setPatientId("");
+                }}
+              >
+                {clinics.length === 0 && (
+                  <option value="">No assigned clinic</option>
+                )}
+                {clinics.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.site_name}
                   </option>
                 ))}
               </select>
             </label>
+          </section>
 
-            <label>
-              Appointment Date
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-              />
-            </label>
+          <section className="dt-stats">
+            <div className="dt-stat">
+              <span>Upcoming</span>
+              <strong>{upcoming.length}</strong>
+              <small>Scheduled or confirmed</small>
+            </div>
+            <div className="dt-stat">
+              <span>Reminder Window</span>
+              <strong>{reminders.length}</strong>
+              <small>Within reminder period</small>
+            </div>
+            <div className="dt-stat">
+              <span>Overdue</span>
+              <strong>{overdue.length}</strong>
+              <small>Not marked completed</small>
+            </div>
+            <div className="dt-stat">
+              <span>Today's Appointments</span>
+              <strong>
+                {
+                  clinicAppointments.filter(
+                    (a) => a.appointment_date === today
+                  ).length
+                }
+              </strong>
+              <small>{formatDate(today)}</small>
+            </div>
+          </section>
 
-            <label>
-              Status
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
+          <section className="dt-panel">
+            <div className="dt-heading">
+              <div>
+                <span className="dt-eyebrow">
+                  FOLLOW-UP SCHEDULER
+                </span>
+                <h2>Schedule Next Appointment</h2>
+                <p>
+                  Choose an interval or adjust it for the
+                  individual patient.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="dt-btn primary"
+                disabled={!clinicId}
+                onClick={() => setShowForm((v) => !v)}
               >
-                <option value="all">All Statuses</option>
-                {STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </label>
+                {showForm ? "Close Scheduler" : "+ New Follow-up"}
+              </button>
+            </div>
 
-            <label>
-              Search
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Patient name or ID"
-              />
-            </label>
-          </div>
-        </section>
+            {showForm && (
+              <form onSubmit={saveAppointment}>
+                <div className="dt-grid">
+                  <label className="dt-field">
+                    Patient *
+                    <select
+                      required
+                      value={patientId}
+                      onChange={(e) => setPatientId(e.target.value)}
+                    >
+                      <option value="">Select patient</option>
+                      {clinicPatients.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {patientName(p)}
+                          {" — "}
+                          {p.id_number ||
+                            p.passport_number ||
+                            "No ID"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-        <section className="fp-stats">
-          <div className="fp-stat">
-            <span>Total Appointments</span>
-            <strong>{counts.total}</strong>
-          </div>
+                  <label className="dt-field">
+                    Administration / Reference Date *
+                    <input
+                      type="date"
+                      required
+                      value={administrationDate}
+                      onChange={(e) =>
+                        setAdministrationDate(e.target.value)
+                      }
+                    />
+                  </label>
+                </div>
 
-          <div className="fp-stat">
-            <span>Scheduled</span>
-            <strong>{counts.scheduled}</strong>
-          </div>
-
-          <div className="fp-stat">
-            <span>Completed</span>
-            <strong>{counts.completed}</strong>
-          </div>
-
-          <div className="fp-stat">
-            <span>Cancelled</span>
-            <strong>{counts.cancelled}</strong>
-          </div>
-        </section>
-
-        {showForm && (
-          <section className="fp-card">
-            <h2>Book New Appointment</h2>
-
-            <form onSubmit={createAppointment}>
-              <div className="fp-form-grid">
-                <label>
-                  Patient
-                  <select
-                    required
-                    value={patientId}
-                    onChange={(e) => setPatientId(e.target.value)}
-                  >
-                    <option value="">Select Patient</option>
-                    {patients.map((patient) => (
-                      <option key={patient.id} value={patient.id}>
-                        {patient.first_name} {patient.surname}
-                        {patient.id_number
-                          ? ` — ${patient.id_number}`
-                          : ""}
-                      </option>
+                <div className="dt-interval-section">
+                  <h3>Follow-up interval</h3>
+                  <div className="dt-intervals">
+                    {["28", "56", "84", "custom"].map((option) => (
+                      <button
+                        type="button"
+                        key={option}
+                        className={
+                          "dt-interval " +
+                          (interval === option ? "selected" : "")
+                        }
+                        onClick={() => setInterval(option)}
+                      >
+                        {option === "custom"
+                          ? "Custom"
+                          : `${option} Days`}
+                      </button>
                     ))}
-                  </select>
-                </label>
+                  </div>
 
-                <label>
-                  Appointment Type
-                  <select
-                    value={appointmentType}
-                    onChange={(e) =>
-                      setAppointmentType(e.target.value)
-                    }
-                  >
-                    {TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  {interval === "custom" && (
+                    <label className="dt-field">
+                      Custom number of days (1–365)
+                      <input
+                        type="number"
+                        min="1"
+                        max="365"
+                        required
+                        value={customDays}
+                        onChange={(e) =>
+                          setCustomDays(e.target.value)
+                        }
+                      />
+                    </label>
+                  )}
+                </div>
 
-                <label>
-                  Date
-                  <input
-                    required
-                    type="date"
-                    value={appointmentDate}
-                    onChange={(e) =>
-                      setAppointmentDate(e.target.value)
-                    }
+                <div className="dt-grid">
+                  <label className="dt-field">
+                    Reminder before appointment
+                    <select
+                      value={reminderDays}
+                      onChange={(e) =>
+                        setReminderDays(e.target.value)
+                      }
+                    >
+                      {[1, 2, 3, 4, 7, 14].map((n) => (
+                        <option key={n} value={n}>
+                          {n} days before
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="dt-field">
+                    Appointment Time
+                    <input
+                      type="time"
+                      required
+                      value={bookingTime}
+                      onChange={(e) =>
+                        setBookingTime(e.target.value)
+                      }
+                    />
+                  </label>
+
+                  <label className="dt-field">
+                    Appointment Type
+                    <select
+                      value={appointmentType}
+                      onChange={(e) =>
+                        setAppointmentType(e.target.value)
+                      }
+                    >
+                      <option>Contraceptive Follow-up</option>
+                      <option>Contraceptive Injection</option>
+                      <option>Contraceptive Implant</option>
+                      <option>Oral Contraceptive</option>
+                      <option>Family Planning</option>
+                      <option>Counselling</option>
+                      <option>Other</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="dt-preview">
+                  <div>
+                    <span>Next Appointment</span>
+                    <strong>
+                      {nextDate ? formatDate(nextDate) : "—"}
+                    </strong>
+                    <small>
+                      {validInterval
+                        ? `${selectedInterval} days after reference date`
+                        : "Enter a valid interval"}
+                    </small>
+                  </div>
+                  <div>
+                    <span>Reminder Date</span>
+                    <strong>
+                      {reminderDate
+                        ? formatDate(reminderDate)
+                        : "—"}
+                    </strong>
+                    <small>
+                      {reminderDays} days before appointment
+                    </small>
+                  </div>
+                </div>
+
+                <label className="dt-field">
+                  Clinical / Appointment Notes
+                  <textarea
+                    rows={3}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Reason for follow-up or clinically adjusted interval"
                   />
                 </label>
 
-                <label>
-                  Time
-                  <input
-                    required
-                    type="time"
-                    value={appointmentTime}
-                    onChange={(e) =>
-                      setAppointmentTime(e.target.value)
+                <div className="dt-form-actions">
+                  <button
+                    type="submit"
+                    className="dt-btn primary"
+                    disabled={
+                      saving ||
+                      !patientId ||
+                      !validInterval ||
+                      !nextDate
                     }
-                  />
-                </label>
+                  >
+                    {saving
+                      ? "Saving..."
+                      : "Save Follow-up Appointment"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
+
+          <section className="dt-panel">
+            <div className="dt-heading">
+              <div>
+                <span className="dt-eyebrow">
+                  FOLLOW-UP MONITORING
+                </span>
+                <h2>Upcoming Follow-ups</h2>
+                <p>
+                  Days remaining and alerts for patients
+                  approaching their due date.
+                </p>
+              </div>
+              <button
+                className="dt-btn outline"
+                type="button"
+                onClick={() => setShowAllUpcoming((v) => !v)}
+              >
+                {showAllUpcoming
+                  ? "Show First 10"
+                  : "Show All"}
+              </button>
+            </div>
+
+            {loading ? (
+              <p>Loading follow-ups...</p>
+            ) : upcoming.length === 0 ? (
+              <p>No upcoming follow-ups at this clinic.</p>
+            ) : (
+              <div className="dt-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Patient</th>
+                      <th>Next Appointment</th>
+                      <th>Interval</th>
+                      <th>Countdown</th>
+                      <th>Patient Record</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(showAllUpcoming
+                      ? upcoming
+                      : upcoming.slice(0, 10)
+                    ).map((a) => (
+                      <tr key={a.id}>
+                        <td>
+                          <strong>
+                            {patientName(
+                              patientMap.get(a.patient_id)
+                            )}
+                          </strong>
+                          <small>{a.appointment_type}</small>
+                        </td>
+                        <td>
+                          {formatDate(a.appointment_date)}
+                        </td>
+                        <td>
+                          {a.interval_days == null
+                            ? "—"
+                            : `${a.interval_days} days`}
+                        </td>
+                        <td>
+                          <Countdown appointment={a} />
+                        </td>
+                        <td>
+                          <Link
+                            href={`/nurse/patients/${a.patient_id}`}
+                            className="dt-link"
+                          >
+                            Open Record
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {overdue.length > 0 && (
+            <section className="dt-panel">
+              <div className="dt-heading">
+                <div>
+                  <span className="dt-eyebrow">
+                    ACTION REQUIRED
+                  </span>
+                  <h2>Overdue Follow-ups</h2>
+                </div>
               </div>
 
-              <label className="fp-notes">
-                Notes
-                <textarea
-                  rows={3}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Optional appointment notes"
-                />
-              </label>
-
-              <button
-                type="submit"
-                className="fp-button primary"
-                disabled={saving || !selectedFacility}
-              >
-                {saving ? "Saving..." : "Save Appointment"}
-              </button>
-            </form>
-          </section>
-        )}
-
-        <section className="fp-card">
-          <div className="fp-section-heading">
-            <h2>Appointment Schedule</h2>
-            <span>{filteredAppointments.length} records</span>
-          </div>
-
-          {loading ? (
-            <p>Loading appointments...</p>
-          ) : filteredAppointments.length === 0 ? (
-            <div className="fp-empty">
-              No appointments found for the selected date and filters.
-            </div>
-          ) : (
-            <div className="fp-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Patient</th>
-                    <th>Clinic</th>
-                    <th>Appointment Type</th>
-                    <th>Status</th>
-                    <th>Patient Record</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {filteredAppointments.map((appointment) => {
-                    const patient = patientMap.get(
-                      appointment.patient_id
-                    );
-
-                    return (
-                      <tr key={appointment.id}>
-                        <td>{appointment.appointment_time}</td>
-
+              <div className="dt-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Patient</th>
+                      <th>Due Date</th>
+                      <th>Overdue</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overdue.map((a) => (
+                      <tr key={a.id}>
                         <td>
-                          {patient
-                            ? `${patient.first_name} ${patient.surname}`
-                            : "Patient unavailable"}
+                          {patientName(
+                            patientMap.get(a.patient_id)
+                          )}
                         </td>
-
+                        <td>{formatDate(a.appointment_date)}</td>
                         <td>
-                          {facilityMap.get(appointment.facility_id)
-                            ?.name || "Unknown Clinic"}
+                          <Countdown appointment={a} />
                         </td>
-
-                        <td>{appointment.appointment_type}</td>
-
                         <td>
                           <select
-                            value={appointment.status}
+                            value={a.status}
+                            disabled={updatingId === a.id}
                             onChange={(e) =>
-                              void updateStatus(
-                                appointment.id,
+                              void changeStatus(
+                                a,
                                 e.target.value
                               )
                             }
                           >
-                            {STATUSES.map((status) => (
-                              <option key={status} value={status}>
-                                {status}
+                            {statusOptions.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
                               </option>
                             ))}
                           </select>
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
+          <section className="dt-panel">
+            <div className="dt-heading">
+              <div>
+                <span className="dt-eyebrow">
+                  DAILY CLINICAL SCHEDULE
+                </span>
+                <h2>Appointments for {formatDate(viewDate)}</h2>
+              </div>
+              <div className="dt-actions">
+                <button
+                  className="dt-btn outline"
+                  onClick={() => changeViewDate(-1)}
+                >
+                  Previous
+                </button>
+                <button
+                  className="dt-btn outline"
+                  onClick={() => setViewDate(today)}
+                >
+                  Today
+                </button>
+                <button
+                  className="dt-btn outline"
+                  onClick={() => changeViewDate(1)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+
+            <div className="dt-grid">
+              <label className="dt-field">
+                Date
+                <input
+                  type="date"
+                  value={viewDate}
+                  onChange={(e) => setViewDate(e.target.value)}
+                />
+              </label>
+
+              <label className="dt-field">
+                Status
+                <select
+                  value={statusFilter}
+                  onChange={(e) =>
+                    setStatusFilter(e.target.value)
+                  }
+                >
+                  <option value="all">All statuses</option>
+                  {statusOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="dt-field">
+                Search
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Patient name or ID"
+                />
+              </label>
+            </div>
+
+            {daily.length === 0 ? (
+              <div className="dt-empty">
+                No appointments found for this date.
+              </div>
+            ) : (
+              <div className="dt-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Patient</th>
+                      <th>Appointment</th>
+                      <th>Countdown</th>
+                      <th>Status</th>
+                      <th>Record</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daily.map((a) => (
+                      <tr key={a.id}>
+                        <td>
+                          {a.appointment_time.slice(0, 5)}
+                        </td>
+                        <td>
+                          {patientName(
+                            patientMap.get(a.patient_id)
+                          )}
+                        </td>
+                        <td>{a.appointment_type}</td>
+                        <td>
+                          <Countdown appointment={a} />
+                        </td>
+                        <td>
+                          <select
+                            value={a.status}
+                            disabled={updatingId === a.id}
+                            onChange={(e) =>
+                              void changeStatus(
+                                a,
+                                e.target.value
+                              )
+                            }
+                          >
+                            {statusOptions.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
                         <td>
                           <Link
-                            href={`/nurse/patients/${appointment.patient_id}`}
-                            className="fp-link"
+                            href={`/nurse/patients/${a.patient_id}`}
+                            className="dt-link"
                           >
-                            Open Patient
+                            Open
                           </Link>
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
-      <style jsx>{`
-        .fp-page {
+          <footer>
+            DoseTrack © 2026 · Family Planning Management
+          </footer>
+        </div>
+      </main>
+
+      <style jsx global>{`
+        .dt-app {
+          --teal: #0e756d;
+          --ink: #172d36;
+          --line: #e3eaf0;
+          display: flex;
           min-height: 100vh;
-          background: #f4f7fb;
-          color: #172b4d;
-          padding: 32px 20px;
-          font-family: Arial, Helvetica, sans-serif;
+          background: #f5f8fa;
+          color: var(--ink);
+          font-family: Inter, system-ui, Arial, sans-serif;
+          font-size: 14px;
         }
-
-        .fp-container {
-          max-width: 1350px;
+        .dt-app * { box-sizing: border-box; }
+        .dt-sidebar {
+          width: 266px;
+          flex-shrink: 0;
+          background: #10383f;
+          color: #d8eaeb;
+          min-height: 100vh;
+          padding: 25px 14px;
+        }
+        .dt-brand {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 5px 10px 30px;
+          border-bottom: 1px solid #ffffff20;
+        }
+        .dt-brand-icon {
+          display: grid;
+          place-items: center;
+          width: 42px;
+          height: 42px;
+          background: #1b6c69;
+          border-radius: 12px;
+          font-size: 25px;
+        }
+        .dt-brand strong {
+          display: block;
+          color: white;
+          font-size: 23px;
+        }
+        .dt-brand small {
+          display: block;
+          margin-top: 5px;
+          letter-spacing: 2px;
+          font-size: 9px;
+        }
+        .dt-side-heading {
+          margin: 30px 12px 14px;
+          color: #80a8ad;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 1.5px;
+        }
+        .dt-sidebar nav {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .dt-sidebar nav a {
+          color: #c8dadd;
+          padding: 13px;
+          text-decoration: none;
+          border-radius: 9px;
+        }
+        .dt-sidebar nav a:hover,
+        .dt-sidebar nav a.active {
+          background: #22656b;
+          color: white;
+        }
+        .dt-main {
+          flex: 1;
+          min-width: 0;
+        }
+        .dt-topbar {
+          background: white;
+          border-bottom: 1px solid var(--line);
+          padding: 24px 35px;
+          display: flex;
+          justify-content: space-between;
+          gap: 15px;
+        }
+        .dt-topbar a, .dt-link {
+          color: var(--teal);
+          text-decoration: none;
+          font-weight: 750;
+        }
+        .dt-content {
+          max-width: 1450px;
           margin: auto;
+          padding: 35px;
         }
-
-        .fp-header {
+        .dt-hero {
+          padding: 38px;
+          margin-bottom: 25px;
+          border-radius: 20px;
+          background: linear-gradient(
+            110deg,
+            #0d444a,
+            #126e70 70%,
+            #22898a
+          );
+          color: white;
+        }
+        .dt-chip {
+          display: inline-block;
+          background: #ffffff20;
+          padding: 8px 13px;
+          border-radius: 30px;
+          font-size: 10px;
+          letter-spacing: 1.3px;
+          font-weight: 800;
+        }
+        .dt-hero h1 {
+          margin: 20px 0 12px;
+          font-size: clamp(27px, 3vw, 38px);
+        }
+        .dt-hero p {
+          max-width: 720px;
+          color: #d2eeeb;
+          line-height: 1.7;
+        }
+        .dt-panel {
+          padding: 25px;
+          margin-bottom: 23px;
+          background: white;
+          border: 1px solid var(--line);
+          border-radius: 16px;
+        }
+        .dt-heading {
           display: flex;
           justify-content: space-between;
           align-items: center;
           flex-wrap: wrap;
-          gap: 20px;
-          margin-bottom: 28px;
+          gap: 15px;
+          margin-bottom: 24px;
         }
-
-        .fp-eyebrow {
+        .dt-heading h2 {
+          font-size: 22px;
+          margin: 7px 0;
+        }
+        .dt-heading p {
+          color: #647781;
           font-size: 12px;
-          font-weight: 700;
-          letter-spacing: 1.5px;
-          color: #087c87;
         }
-
-        h1 {
-          font-size: 34px;
-          margin: 8px 0;
+        .dt-eyebrow {
+          color: #6b858b;
+          letter-spacing: 1.6px;
+          font-size: 10px;
+          font-weight: 850;
         }
-
-        h2 {
-          font-size: 20px;
-          margin: 0 0 20px;
+        .dt-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 18px;
+          margin-bottom: 20px;
         }
-
-        .fp-subtitle {
-          color: #66758c;
+        .dt-field {
+          display: flex;
+          flex-direction: column;
+          gap: 9px;
+          margin-bottom: 17px;
+          color: #49626c;
+          font-size: 12px;
+          font-weight: 750;
         }
-
-        .fp-actions {
+        .dt-field input,
+        .dt-field select,
+        .dt-field textarea,
+        .dt-app td select {
+          width: 100%;
+          min-height: 43px;
+          border: 1px solid #dbe4e9;
+          border-radius: 9px;
+          padding: 10px;
+          background: white;
+          color: var(--ink);
+          font: inherit;
+        }
+        .dt-btn {
+          border: 1px solid #dbe4e9;
+          border-radius: 9px;
+          padding: 11px 16px;
+          font-weight: 800;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .dt-btn.primary {
+          background: var(--teal);
+          border-color: var(--teal);
+          color: white;
+        }
+        .dt-btn.outline {
+          background: white;
+          color: #35505a;
+        }
+        .dt-btn:disabled {
+          opacity: .5;
+          cursor: not-allowed;
+        }
+        .dt-actions {
+          display: flex;
+          gap: 9px;
+          flex-wrap: wrap;
+        }
+        .dt-stats {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 16px;
+          margin-bottom: 23px;
+        }
+        .dt-stat {
+          display: flex;
+          flex-direction: column;
+          gap: 9px;
+          background: white;
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          padding: 22px;
+        }
+        .dt-stat span {
+          font-size: 12px;
+          color: #647781;
+        }
+        .dt-stat strong {
+          font-size: 32px;
+          color: var(--teal);
+        }
+        .dt-stat small {
+          color: #91a1a9;
+        }
+        .dt-interval-section {
+          background: #f8fbfc;
+          border: 1px solid var(--line);
+          border-radius: 13px;
+          padding: 20px;
+          margin-bottom: 22px;
+        }
+        .dt-interval-section h3 {
+          margin: 0 0 17px;
+        }
+        .dt-intervals {
           display: flex;
           flex-wrap: wrap;
           gap: 10px;
+          margin-bottom: 15px;
         }
-
-        .fp-button {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 9px;
-          padding: 12px 18px;
-          font-weight: 700;
-          font-size: 14px;
+        .dt-interval {
+          background: white;
+          border: 1px solid #dbe4e9;
+          border-radius: 10px;
+          padding: 14px 22px;
+          font-weight: 800;
+          color: #49626c;
           cursor: pointer;
-          text-decoration: none;
-          border: 1px solid #d9e2ed;
         }
-
-        .primary {
-          background: #087c87;
+        .dt-interval.selected {
+          background: var(--teal);
+          border-color: var(--teal);
           color: white;
-          border-color: #087c87;
         }
-
-        .secondary {
-          background: white;
-          color: #172b4d;
-        }
-
-        .fp-button:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .fp-card {
-          background: white;
-          padding: 24px;
-          border: 1px solid #e2e8f0;
-          border-radius: 14px;
-          margin-bottom: 24px;
-          box-shadow: 0 3px 12px rgba(20, 40, 70, 0.03);
-        }
-
-        .fp-filter-grid,
-        .fp-form-grid {
+        .dt-preview {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 18px;
-        }
-
-        label {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          font-size: 13px;
-          font-weight: 700;
-          color: #44546a;
-        }
-
-        input,
-        select,
-        textarea {
-          width: 100%;
-          min-width: 0;
-          padding: 11px;
-          border: 1px solid #d9e2ed;
-          border-radius: 8px;
-          background: white;
-          color: #172b4d;
-          font-size: 14px;
-          box-sizing: border-box;
-        }
-
-        .fp-stats {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(2, 1fr);
           gap: 16px;
-          margin-bottom: 24px;
+          margin-bottom: 22px;
         }
-
-        .fp-stat {
-          background: white;
-          padding: 22px;
-          border-radius: 12px;
-          border: 1px solid #e2e8f0;
+        .dt-preview > div {
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          gap: 10px;
+          background: #e9f8f3;
+          border-radius: 12px;
+          padding: 22px;
         }
-
-        .fp-stat span {
-          font-size: 13px;
-          color: #66758c;
+        .dt-preview span {
+          color: #0e665e;
+          font-size: 12px;
+          font-weight: 750;
         }
-
-        .fp-stat strong {
-          font-size: 30px;
-          color: #087c87;
+        .dt-preview strong {
+          font-size: 23px;
+          color: #0b5953;
         }
-
-        .fp-notes {
-          margin: 20px 0;
+        .dt-preview small {
+          color: #0e756d;
         }
-
-        .fp-section-heading {
+        .dt-form-actions {
           display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 12px;
+          justify-content: flex-end;
+          margin-top: 20px;
         }
-
-        .fp-section-heading h2 {
-          margin: 0;
-        }
-
-        .fp-section-heading span {
-          color: #66758c;
-          font-size: 13px;
-        }
-
-        .fp-table-wrap {
+        .dt-table-wrap {
           overflow-x: auto;
         }
-
-        table {
+        .dt-app table {
           width: 100%;
           border-collapse: collapse;
-          font-size: 14px;
+          font-size: 12px;
         }
-
-        th {
-          background: #f4f7fb;
+        .dt-app th {
+          background: #f5f8fa;
+          color: #49626c;
           text-align: left;
           padding: 14px;
-          color: #44546a;
+          white-space: nowrap;
         }
-
-        td {
+        .dt-app td {
+          border-bottom: 1px solid var(--line);
           padding: 14px;
-          border-bottom: 1px solid #e2e8f0;
+          vertical-align: middle;
         }
-
-        td select {
-          min-width: 120px;
+        .dt-app td strong,
+        .dt-app td small {
+          display: block;
         }
-
-        .fp-link {
-          color: #087c87;
-          font-weight: 700;
-          text-decoration: none;
+        .dt-app td small {
+          color: #647781;
+          margin-top: 5px;
         }
-
-        .fp-empty {
-          padding: 40px 15px;
-          text-align: center;
-          color: #66758c;
+        .dt-pill {
+          display: inline-block;
+          padding: 8px 11px;
+          border-radius: 30px;
+          font-size: 11px;
+          font-weight: 800;
+          white-space: nowrap;
         }
-
-        .fp-alert {
+        .dt-pill.good {
+          background: #e9f8f3;
+          color: #08776d;
+        }
+        .dt-pill.warning {
+          background: #fff3d9;
+          color: #986000;
+        }
+        .dt-pill.danger {
+          background: #fff0f0;
+          color: #a02727;
+        }
+        .dt-pill.neutral {
+          background: #edf1f3;
+          color: #647781;
+        }
+        .dt-alert {
           padding: 15px;
-          border-radius: 9px;
           margin-bottom: 20px;
+          border-radius: 9px;
         }
-
-        .error {
-          background: #fff1f2;
-          color: #9f1239;
+        .dt-alert.error {
+          background: #fff0f0;
+          color: #a02727;
         }
-
-        .success {
-          background: #ecfdf5;
-          color: #047857;
+        .dt-alert.success {
+          background: #e9f8f3;
+          color: #08776d;
         }
-
-        @media (max-width: 900px) {
-          .fp-filter-grid,
-          .fp-form-grid,
-          .fp-stats {
-            grid-template-columns: repeat(2, 1fr);
+        .dt-empty {
+          text-align: center;
+          padding: 35px;
+          color: #647781;
+        }
+        .dt-app footer {
+          color: #91a1a9;
+          font-size: 11px;
+          padding: 25px 0;
+        }
+        @media(max-width: 1100px) {
+          .dt-sidebar { width: 215px; }
+          .dt-stats { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media(max-width: 800px) {
+          .dt-app { display: block; }
+          .dt-sidebar {
+            width: 100%;
+            min-height: auto;
           }
+          .dt-sidebar nav {
+            flex-direction: row;
+            overflow-x: auto;
+          }
+          .dt-sidebar nav a { white-space: nowrap; }
+          .dt-content { padding: 20px; }
+          .dt-topbar { padding: 18px; }
+          .dt-hero { padding: 25px; }
         }
-
-        @media (max-width: 600px) {
-          .fp-filter-grid,
-          .fp-form-grid,
-          .fp-stats {
+        @media(max-width: 560px) {
+          .dt-grid,
+          .dt-preview,
+          .dt-stats {
             grid-template-columns: 1fr;
           }
-
-          h1 {
-            font-size: 27px;
-          }
-
-          .fp-page {
-            padding: 16px 10px;
-          }
-
-          .fp-card {
-            padding: 16px;
-          }
+          .dt-panel { padding: 16px; }
+          .dt-interval { flex: 1; }
         }
       `}</style>
-    </main>
+    </div>
   );
 }
