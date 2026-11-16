@@ -190,6 +190,10 @@ export default function DispensedPage() {
       );
 
       setClinics(authorisedClinics);
+
+      // FIX:
+      // Load all active medications independently
+      // of clinic stock quantities.
       setMedications(medicationsResult.data || []);
 
       const allowedClinicIds = new Set(
@@ -237,18 +241,14 @@ export default function DispensedPage() {
     [batches, clinicId]
   );
 
+  // UPDATED:
+  // Show all active medications, not only
+  // medications with positive stock.
   const availableMedications = useMemo(() => {
-    const availableIds = new Set(
-      clinicBatches.map(
-        (batch) => batch.product_id
-      )
+    return [...medications].sort((a, b) =>
+      a.name.localeCompare(b.name)
     );
-
-    return medications.filter(
-      (medication) =>
-        availableIds.has(medication.id)
-    );
-  }, [medications, clinicBatches]);
+  }, [medications]);
 
   const totalUnits = useMemo(
     () =>
@@ -465,21 +465,20 @@ export default function DispensedPage() {
       /*
        * DATABASE INTEGRATION
        *
-       * The actual dispensing transaction
-       * must be performed by a secure
-       * Supabase RPC function.
+       * Actual dispensing must be performed
+       * by a secure Supabase RPC function.
        *
        * The function must:
        *
        * 1. Verify nurse clinic access.
-       * 2. Lock the selected stock batches.
+       * 2. Lock selected stock batches.
        * 3. Prevent expired stock dispensing.
        * 4. Prevent negative stock balances.
        * 5. Deduct stock from each batch.
        * 6. Write fp_stock_batch_movements.
        * 7. Roll back all items on failure.
        *
-       * Do not directly update batch
+       * Do not directly update stock
        * balances from the browser.
        */
 
@@ -707,9 +706,14 @@ export default function DispensedPage() {
                               e.target.value
                             )
                           }
+                          disabled={!clinicId}
                         >
                           <option value="">
-                            Select medication
+                            {!clinicId
+                              ? "Select clinic first"
+                              : availableMedications.length === 0
+                              ? "No medications available"
+                              : "Select medication"}
                           </option>
 
                           {availableMedications.map(
@@ -719,10 +723,26 @@ export default function DispensedPage() {
                                 value={med.id}
                               >
                                 {med.name}
+                                {med.unit
+                                  ? ` (${med.unit})`
+                                  : ""}
                               </option>
                             )
                           )}
                         </select>
+
+                        {clinicId &&
+                          availableMedications.length === 0 && (
+                            <small
+                              style={{
+                                color: "#b42318",
+                              }}
+                            >
+                              No medications returned
+                              from the stock catalogue.
+                              Check Supabase access.
+                            </small>
+                          )}
                       </label>
 
                       <label>
@@ -741,7 +761,11 @@ export default function DispensedPage() {
                           }
                         >
                           <option value="">
-                            Select batch
+                            {!item.medicationId
+                              ? "Select medication first"
+                              : medicationBatches.length === 0
+                              ? "No stock available at this clinic"
+                              : "Select available batch"}
                           </option>
 
                           {medicationBatches.map(
