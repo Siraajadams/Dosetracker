@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -733,6 +732,7 @@ export default function NurseDashboardPage() {
               { label: "Stock Reorder", path: "/nurse/stock/reorder", detail: "Prepare an order for depot" },
               { label: "Stock Dashboard", path: "/nurse/stock", detail: "View pharmacy inventory" },
               { label: "Order History", path: "/nurse/stock/orders", detail: "Track depot orders" },
+              { label: "Inter-Clinic Stock Transfers", path: "/nurse/stock/transfers", detail: "Request, approve, dispatch and receive stock between clinics" },
             ].map(item => (
               <button
                 key={item.path}
