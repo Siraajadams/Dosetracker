@@ -1,216 +1,556 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { getAssignedFacilities } from "@/lib/fpStock";
-
-type Transfer = {
-  id: string;
-  source_facility_id: string;
-  destination_facility_id: string;
-  status: string;
-  reason: string;
-  created_at: string;
-};
 
 type Site = {
   id: string;
   site_name: string;
 };
 
-export default function StockTransfersPage() {
-  const [transfers, setTransfers] = useState<Transfer[]>([]);
+type Product = {
+  id: string;
+  name: string;
+};
+
+type RequestItem = {
+  product_id: string;
+  quantity: string;
+};
+
+export default function NewTransferPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [sites, setSites] = useState<Site[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [assigned, setAssigned] = useState<string[]>([]);
-  const [filter, setFilter] = useState("all");
+
+  const [source, setSource] = useState("");
+  const [destination, setDestination] = useState("");
+  const [reason, setReason] = useState("");
+
+  const [items, setItems] = useState<RequestItem[]>([
+    { product_id: "", quantity: "" },
+  ]);
+
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const { data: auth, error: authError } =
+          await supabase.auth.getUser();
+
+        if (authError || !auth.user) {
+          throw new Error("Please sign in first.");
+        }
+
+        const facilities = await getAssignedFacilities();
+
+        const [siteResult, productResult] = await Promise.all([
+          supabase
+            .from("sites")
+            .select("id,site_name")
+            .order("site_name"),
+
+          supabase
+            .from("fp_stock_products")
+            .select("id,name")
+            .order("name"),
+        ]);
+
+        if (siteResult.error) throw siteResult.error;
+        if (productResult.error) throw productResult.error;
+
+        if (cancelled) return;
+
+        setAssigned(facilities);
+        setSites((siteResult.data || []) as Site[]);
+        setProducts((productResult.data || []) as Product[]);
+
+        const requestedSite = searchParams.get("site_id");
+
+        if (
+          requestedSite &&
+          facilities.includes(requestedSite)
+        ) {
+          setDestination(requestedSite);
+        } else if (facilities.length === 1) {
+          setDestination(facilities[0]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load transfer form."
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams]);
+
+  function updateItem(
+    index: number,
+    field: keyof RequestItem,
+    value: string
+  ) {
+    setItems((previous) =>
+      previous.map((item, i) =>
+        i === index ? { ...item, [field]: value } : item
+      )
+    );
+  }
+
+  function addItem() {
+    setItems((previous) => [
+      ...previous,
+      { product_id: "", quantity: "" },
+    ]);
+  }
+
+  function removeItem(index: number) {
+    setItems((previous) =>
+      previous.filter((_, i) => i !== index)
+    );
+  }
+
+  async function submitRequest(
+    event: React.FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+    if (saving) return;
+
     setError("");
 
+    if (!source || !destination) {
+      setError("Select both clinics.");
+      return;
+    }
+
+    if (source === destination) {
+      setError("Sending and receiving clinics must differ.");
+      return;
+    }
+
+    if (!assigned.includes(destination)) {
+      setError(
+        "You must be assigned to the receiving clinic."
+      );
+      return;
+    }
+
+    if (!reason.trim()) {
+      setError("Enter a reason for the transfer.");
+      return;
+    }
+
+    if (
+      items.length === 0 ||
+      items.some(
+        (item) =>
+          !item.product_id ||
+          !Number.isSafeInteger(Number(item.quantity)) ||
+          Number(item.quantity) <= 0
+      )
+    ) {
+      setError(
+        "Select a medication and enter a positive whole-number quantity for every item."
+      );
+      return;
+    }
+
+    const productIds = items.map((item) => item.product_id);
+
+    if (new Set(productIds).size !== productIds.length) {
+      setError(
+        "Each medication must appear only once. Combine quantities for duplicate medications."
+      );
+      return;
+    }
+
+    setSaving(true);
+
     try {
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) throw new Error("Please sign in.");
+      const { data: auth, error: authError } =
+        await supabase.auth.getUser();
 
-      const ids = await getAssignedFacilities();
-      setAssigned(ids);
-
-      if (!ids.length) {
-        setTransfers([]);
-        setSites([]);
-        return;
+      if (authError || !auth.user) {
+        throw new Error("Your session has expired.");
       }
 
-      const [t, s] = await Promise.all([
-        supabase
-          .from("fp_stock_transfers")
-          .select(
-            "id,source_facility_id,destination_facility_id,status,reason,created_at"
-          )
-          .order("created_at", { ascending: false })
-          .limit(500),
-        supabase
-          .from("sites")
-          .select("id,site_name"),
-      ]);
+      // Recheck clinic assignment before submitting.
+      const currentFacilities = await getAssignedFacilities();
 
-      if (t.error) throw t.error;
-      if (s.error) throw s.error;
+      if (!currentFacilities.includes(destination)) {
+        throw new Error(
+          "You no longer have access to the receiving clinic."
+        );
+      }
 
-      setTransfers(
-        ((t.data || []) as Transfer[]).filter(
-          (row) =>
-            ids.includes(row.source_facility_id) ||
-            ids.includes(row.destination_facility_id)
-        )
+      const payload = items.map((item) => ({
+        product_id: item.product_id,
+        quantity_requested: Number(item.quantity),
+      }));
+
+      // This RPC must exist in Supabase.
+      // It must validate clinic permissions and create
+      // the transfer and items in one transaction.
+      const { data, error: rpcError } = await supabase.rpc(
+        "fp_request_stock_transfer",
+        {
+          p_source: source,
+          p_destination: destination,
+          p_reason: reason.trim(),
+          p_items: payload,
+        }
       );
-      setSites((s.data || []) as Site[]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load transfers");
+
+      if (rpcError) throw rpcError;
+
+      if (typeof data !== "string" || !data) {
+        throw new Error(
+          "The server did not return a transfer ID."
+        );
+      }
+
+      router.push(
+        `/nurse/stock/transfers/${encodeURIComponent(data)}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Transfer request failed."
+      );
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
-  }, []);
+  }
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const name = (id: string) =>
-    sites.find((s) => s.id === id)?.site_name || id;
-
-  const visible = transfers.filter((t) => {
-    if (filter === "incoming")
-      return assigned.includes(t.destination_facility_id);
-    if (filter === "outgoing")
-      return assigned.includes(t.source_facility_id);
-    if (filter === "pending")
-      return ["requested", "approved", "dispatched"].includes(t.status);
-    return true;
-  });
+  if (loading) {
+    return (
+      <main style={styles.page}>
+        Loading transfer request form...
+      </main>
+    );
+  }
 
   return (
-    <main style={page}>
-      <Link href="/nurse/stock">← Stock Dashboard</Link>
-
-      <header style={header}>
-        <div>
-          <p style={eyebrow}>DOSETRACK / FAMILY PLANNING</p>
-          <h1>Inter-Clinic Stock Transfers</h1>
-          <p style={muted}>
-            Request, approve, dispatch and receive stock between clinics.
-          </p>
-        </div>
-        <Link href="/nurse/stock/transfers/new" style={primaryLink}>
-          + New Transfer Request
+    <main style={styles.page}>
+      <div style={styles.container}>
+        <Link href="/nurse/stock/transfers">
+          ← Back to Transfers
         </Link>
-      </header>
 
-      {error && <p role="alert" style={errorBox}>{error}</p>}
+        <header style={{ margin: "24px 0" }}>
+          <p style={styles.eyebrow}>
+            DOSETRACK / STOCK MANAGEMENT
+          </p>
 
-      <section style={card}>
-        <div style={header}>
-          <h2>Transfer History</h2>
-          <button onClick={() => void load()} style={button}>
-            Refresh
-          </button>
-        </div>
+          <h1>New Inter-Clinic Stock Transfer</h1>
 
-        <div style={filters}>
-          {["all", "incoming", "outgoing", "pending"].map((value) => (
-            <button
-              key={value}
-              onClick={() => setFilter(value)}
-              style={{
-                ...button,
-                background: filter === value ? "#164c7e" : "#fff",
-                color: filter === value ? "#fff" : "#164c7e",
-              }}
-            >
-              {value.charAt(0).toUpperCase() + value.slice(1)}
-            </button>
-          ))}
-        </div>
+          <p style={styles.muted}>
+            Request medication stock from another clinic.
+            The sending clinic must approve and dispatch
+            the request before receipt can be confirmed.
+          </p>
+        </header>
 
-        {loading ? (
-          <p>Loading transfers...</p>
-        ) : !assigned.length ? (
-          <p>No clinics are assigned to your account.</p>
-        ) : !visible.length ? (
-          <p>No transfers found.</p>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            {visible.map((t) => (
-              <Link
-                key={t.id}
-                href={`/nurse/stock/transfers/${t.id}`}
-                style={transferCard}
-              >
-                <div style={header}>
-                  <strong>{name(t.source_facility_id)}</strong>
-                  <span style={{ color: "#0f766e" }}>→</span>
-                  <strong>{name(t.destination_facility_id)}</strong>
-                </div>
-                <p style={muted}>{t.reason}</p>
-                <div style={header}>
-                  <span style={statusStyle}>{t.status.replaceAll("_", " ")}</span>
-                  <span style={muted}>
-                    {new Date(t.created_at).toLocaleDateString("en-ZA")}
-                  </span>
-                </div>
-              </Link>
-            ))}
+        {error && (
+          <div role="alert" style={styles.error}>
+            {error}
           </div>
         )}
-      </section>
+
+        {assigned.length === 0 && (
+          <div style={styles.error}>
+            No assigned receiving clinics were found.
+            Contact the DoseTrack administrator.
+          </div>
+        )}
+
+        <form onSubmit={submitRequest}>
+          <section style={styles.card}>
+            <h2>Clinic Details</h2>
+
+            <label style={styles.label}>
+              Sending Clinic
+            </label>
+
+            <select
+              required
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              style={styles.input}
+            >
+              <option value="">Select sending clinic</option>
+
+              {sites
+                .filter((site) => site.id !== destination)
+                .map((site) => (
+                  <option key={site.id} value={site.id}>
+                    {site.site_name}
+                  </option>
+                ))}
+            </select>
+
+            <label style={styles.label}>
+              Receiving Clinic (Your Clinic)
+            </label>
+
+            <select
+              required
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              style={styles.input}
+            >
+              <option value="">Select receiving clinic</option>
+
+              {sites
+                .filter(
+                  (site) =>
+                    assigned.includes(site.id) &&
+                    site.id !== source
+                )
+                .map((site) => (
+                  <option key={site.id} value={site.id}>
+                    {site.site_name}
+                  </option>
+                ))}
+            </select>
+
+            <label style={styles.label}>
+              Reason for Request
+            </label>
+
+            <textarea
+              required
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Example: Insufficient stock to meet patient demand"
+              rows={3}
+              style={styles.input}
+            />
+          </section>
+
+          <section style={styles.card}>
+            <h2>Medications Requested</h2>
+
+            {items.map((item, index) => (
+              <div key={index} style={styles.itemRow}>
+                <div style={{ flex: 2, minWidth: 200 }}>
+                  <label style={styles.label}>
+                    Medication
+                  </label>
+
+                  <select
+                    required
+                    value={item.product_id}
+                    onChange={(e) =>
+                      updateItem(
+                        index,
+                        "product_id",
+                        e.target.value
+                      )
+                    }
+                    style={styles.input}
+                  >
+                    <option value="">
+                      Select medication
+                    </option>
+
+                    {products.map((product) => (
+                      <option
+                        key={product.id}
+                        value={product.id}
+                      >
+                        {product.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <label style={styles.label}>
+                    Quantity
+                  </label>
+
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    step={1}
+                    value={item.quantity}
+                    onChange={(e) =>
+                      updateItem(
+                        index,
+                        "quantity",
+                        e.target.value
+                      )
+                    }
+                    style={styles.input}
+                  />
+                </div>
+
+                {items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeItem(index)}
+                    style={styles.removeButton}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={addItem}
+              style={styles.secondaryButton}
+            >
+              + Add Another Medication
+            </button>
+          </section>
+
+          <section style={styles.card}>
+            <h2>Submit Transfer Request</h2>
+
+            <p style={styles.muted}>
+              Submitting creates a pending request.
+              Stock must not be deducted or added
+              until the appropriate dispatch and
+              receipt transactions are processed.
+            </p>
+
+            <button
+              type="submit"
+              disabled={
+                saving ||
+                assigned.length === 0 ||
+                products.length === 0
+              }
+              style={{
+                ...styles.primaryButton,
+                opacity: saving ? 0.6 : 1,
+              }}
+            >
+              {saving
+                ? "Submitting..."
+                : "Submit Transfer Request"}
+            </button>
+          </section>
+        </form>
+      </div>
     </main>
   );
 }
 
-const page: React.CSSProperties = {
-  maxWidth: 1150, margin: "30px auto", padding: 20,
-  fontFamily: "Arial, sans-serif", color: "#17333b",
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    background: "#f4f8fa",
+    padding: "28px 16px",
+    fontFamily: "Arial, sans-serif",
+    color: "#17333b",
+  },
+  container: {
+    maxWidth: 950,
+    margin: "0 auto",
+  },
+  eyebrow: {
+    fontSize: 12,
+    color: "#0f766e",
+    fontWeight: 800,
+    letterSpacing: 1,
+  },
+  muted: {
+    color: "#64748b",
+    lineHeight: 1.6,
+  },
+  card: {
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    borderRadius: 14,
+    padding: 24,
+    marginBottom: 20,
+  },
+  label: {
+    display: "block",
+    marginTop: 16,
+    marginBottom: 8,
+    fontWeight: 700,
+    fontSize: 14,
+  },
+  input: {
+    display: "block",
+    width: "100%",
+    padding: 12,
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    boxSizing: "border-box",
+    fontSize: 15,
+    background: "white",
+    color: "#17333b",
+  },
+  itemRow: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 12,
+    flexWrap: "wrap",
+    marginBottom: 18,
+    paddingBottom: 18,
+    borderBottom: "1px solid #e2e8f0",
+  },
+  primaryButton: {
+    padding: "14px 22px",
+    background: "#164c7e",
+    color: "white",
+    border: 0,
+    borderRadius: 9,
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  secondaryButton: {
+    padding: "12px 18px",
+    background: "white",
+    color: "#0f766e",
+    border: "1px solid #0f766e",
+    borderRadius: 9,
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  removeButton: {
+    padding: "12px 16px",
+    background: "#fff0f0",
+    color: "#991b1b",
+    border: "1px solid #fecaca",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  error: {
+    background: "#fff0f0",
+    color: "#991b1b",
+    borderRadius: 9,
+    padding: 16,
+    marginBottom: 20,
+  },
 };
-const header: React.CSSProperties = {
-  display: "flex", justifyContent: "space-between",
-  alignItems: "center", gap: 16, flexWrap: "wrap",
-};
-const eyebrow: React.CSSProperties = {
-  fontSize: 12, fontWeight: 800, color: "#0f766e",
-};
-const muted: React.CSSProperties = { color: "#64748b", fontSize: 14 };
-const card: React.CSSProperties = {
-  background: "#fff", border: "1px solid #e2e8f0",
-  borderRadius: 14, padding: 22, marginTop: 24,
-};
-const transferCard: React.CSSProperties = {
-  display: "block", padding: 18, borderRadius: 10,
-  border: "1px solid #e2e8f0", textDecoration: "none",
-  color: "#17333b",
-};
-const button: React.CSSProperties = {
-  border: "1px solid #cbd5e1", borderRadius: 8,
-  padding: "10px 14px", cursor: "pointer",
-  background: "#fff", color: "#164c7e", fontWeight: 700,
-};
-const filters: React.CSSProperties = {
-  display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20,
-};
-const primaryLink: React.CSSProperties = {
-  background: "#164c7e", color: "#fff", padding: "12px 18px",
-  borderRadius: 8, textDecoration: "none", fontWeight: 700,
-};
-const statusStyle: React.CSSProperties = {
-  background: "#e6f7ef", color: "#087f5b",
-  borderRadius: 20, padding: "6px 12px",
-  fontSize: 12, fontWeight: 700,
-};
-const errorBox: React.CSSProperties = {
-  background: "#fff0f0", color: "#a02727",
-  padding: 14, borderRadius: 8,
-};
-
