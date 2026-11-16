@@ -1,8 +1,8 @@
 
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { getAssignedFacilities } from "@/lib/fpStock";
 
@@ -11,7 +11,7 @@ type Transfer = {
   source_facility_id: string;
   destination_facility_id: string;
   status: string;
-  reason: string;
+  reason: string | null;
   created_at: string;
 };
 
@@ -22,7 +22,34 @@ type Site = {
 
 type Filter = "all" | "incoming" | "outgoing" | "pending";
 
+const pageStyle: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "#f4f8fa",
+  padding: "28px 16px",
+  fontFamily: "Arial, sans-serif",
+  color: "#17333b",
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid #e2e8f0",
+  borderRadius: 14,
+  padding: 22,
+};
+
+const primaryButton: React.CSSProperties = {
+  background: "#164c7e",
+  color: "#fff",
+  padding: "13px 18px",
+  border: 0,
+  borderRadius: 9,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
 export default function StockTransfersPage() {
+  const router = useRouter();
+
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [assigned, setAssigned] = useState<string[]>([]);
@@ -40,7 +67,7 @@ export default function StockTransfersPage() {
         await supabase.auth.getUser();
 
       if (authError || !auth.user) {
-        throw new Error("Please sign in to access stock transfers.");
+        throw new Error("Please sign in to view transfers.");
       }
 
       const facilities = await getAssignedFacilities();
@@ -70,7 +97,7 @@ export default function StockTransfersPage() {
       if (transferResult.error) throw transferResult.error;
       if (siteResult.error) throw siteResult.error;
 
-      const accessible = (
+      const visible = (
         (transferResult.data || []) as Transfer[]
       ).filter(
         (t) =>
@@ -78,7 +105,7 @@ export default function StockTransfersPage() {
           facilities.includes(t.destination_facility_id)
       );
 
-      setTransfers(accessible);
+      setTransfers(visible);
       setSites((siteResult.data || []) as Site[]);
     } catch (err) {
       setError(
@@ -97,6 +124,19 @@ export default function StockTransfersPage() {
 
   function clinicName(id: string) {
     return sites.find((s) => s.id === id)?.site_name || id;
+  }
+
+  function openNewTransfer() {
+    const path = "/nurse/stock/transfers/new";
+
+    if (assigned.length === 1) {
+      router.push(
+        `${path}?site_id=${encodeURIComponent(assigned[0])}`
+      );
+      return;
+    }
+
+    router.push(path);
   }
 
   const visibleTransfers = transfers.filter((transfer) => {
@@ -129,7 +169,7 @@ export default function StockTransfersPage() {
 
     return [
       transfer.id,
-      transfer.reason,
+      transfer.reason || "",
       transfer.status,
       clinicName(transfer.source_facility_id),
       clinicName(transfer.destination_facility_id),
@@ -144,108 +184,210 @@ export default function StockTransfersPage() {
     (t) => t.status === "received"
   ).length;
 
-  function statusColor(status: string): React.CSSProperties {
-    if (status === "received") {
-      return { background: "#dcfce7", color: "#166534" };
-    }
+  const stats = [
+    { label: "Total Transfers", value: transfers.length },
+    { label: "Pending / In Progress", value: pendingCount },
+    { label: "Completed Transfers", value: completedCount },
+    { label: "Assigned Clinics", value: assigned.length },
+  ];
 
-    if (status === "dispatched") {
-      return { background: "#dbeafe", color: "#1d4ed8" };
-    }
+  function statusStyle(status: string): React.CSSProperties {
+    const colors: Record<string, [string, string]> = {
+      requested: ["#fef3c7", "#92400e"],
+      approved: ["#ccfbf1", "#0f766e"],
+      dispatched: ["#dbeafe", "#1d4ed8"],
+      received: ["#dcfce7", "#166534"],
+      cancelled: ["#fee2e2", "#991b1b"],
+    };
 
-    if (status === "approved") {
-      return { background: "#ccfbf1", color: "#0f766e" };
-    }
+    const [background, color] =
+      colors[status] || ["#f1f5f9", "#475569"];
 
-    if (status === "cancelled") {
-      return { background: "#fee2e2", color: "#991b1b" };
-    }
-
-    return { background: "#fef3c7", color: "#92400e" };
+    return {
+      background,
+      color,
+      padding: "7px 12px",
+      borderRadius: 20,
+      fontSize: 12,
+      fontWeight: 700,
+      textTransform: "capitalize",
+    };
   }
 
   return (
-    <main className="transfer-page">
-      <div className="transfer-container">
-        <Link href="/nurse/stock" className="back-link">
+    <main style={pageStyle}>
+      <div style={{ maxWidth: 1180, margin: "0 auto" }}>
+        <button
+          type="button"
+          onClick={() => router.push("/nurse/stock")}
+          style={{
+            background: "transparent",
+            border: 0,
+            color: "#164c7e",
+            fontWeight: 700,
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
           ← Stock Management
-        </Link>
+        </button>
 
-        <header className="transfer-header">
+        <header
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 20,
+            flexWrap: "wrap",
+            margin: "28px 0",
+          }}
+        >
           <div>
-            <p className="eyebrow">DOSETRACK / FAMILY PLANNING</p>
-            <h1>Inter-Clinic Stock Transfers</h1>
-            <p className="subtitle">
-              Request medication stock, manage approvals,
-              dispatch stock and confirm receipt between clinics.
+            <p
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                color: "#0f766e",
+                letterSpacing: 1,
+              }}
+            >
+              DOSETRACK / FAMILY PLANNING
+            </p>
+
+            <h1 style={{ marginBottom: 8 }}>
+              Inter-Clinic Stock Transfers
+            </h1>
+
+            <p style={{ color: "#64748b", lineHeight: 1.6 }}>
+              Request, approve, dispatch and receive
+              medication stock between clinics.
             </p>
           </div>
 
-          <Link
-            href="/nurse/stock/transfers/new"
-            className="primary-link"
+          <button
+            type="button"
+            onClick={openNewTransfer}
+            style={primaryButton}
           >
             + New Transfer Request
-          </Link>
+          </button>
         </header>
 
         {error && (
-          <div className="error-box" role="alert">
+          <div
+            role="alert"
+            style={{
+              background: "#fee2e2",
+              color: "#991b1b",
+              padding: 16,
+              borderRadius: 9,
+              marginBottom: 20,
+            }}
+          >
             {error}
           </div>
         )}
 
-        <section className="summary-grid">
-          <div className="summary-card">
-            <span>Total Transfers</span>
-            <strong>{transfers.length}</strong>
-          </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              "repeat(auto-fit,minmax(200px,1fr))",
+            gap: 16,
+            marginBottom: 26,
+          }}
+        >
+          {stats.map((stat) => (
+            <div key={stat.label} style={cardStyle}>
+              <span
+                style={{ fontSize: 13, color: "#64748b" }}
+              >
+                {stat.label}
+              </span>
 
-          <div className="summary-card">
-            <span>Pending / In Progress</span>
-            <strong>{pendingCount}</strong>
-          </div>
+              <strong
+                style={{
+                  display: "block",
+                  fontSize: 30,
+                  color: "#0f766e",
+                  marginTop: 12,
+                }}
+              >
+                {stat.value}
+              </strong>
+            </div>
+          ))}
+        </div>
 
-          <div className="summary-card">
-            <span>Completed Transfers</span>
-            <strong>{completedCount}</strong>
-          </div>
-
-          <div className="summary-card">
-            <span>Assigned Clinics</span>
-            <strong>{assigned.length}</strong>
-          </div>
-        </section>
-
-        <section className="transfer-panel">
-          <div className="panel-header">
+        <section style={cardStyle}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 16,
+            }}
+          >
             <div>
-              <h2>Transfer Register</h2>
-              <p>Incoming and outgoing medication transfers</p>
+              <h2 style={{ margin: 0 }}>Transfer Register</h2>
+              <p style={{ color: "#64748b", fontSize: 13 }}>
+                Incoming and outgoing medication transfers
+              </p>
             </div>
 
             <button
-              className="refresh-button"
+              type="button"
               onClick={() => void loadTransfers()}
               disabled={loading}
+              style={{
+                padding: "10px 16px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                background: "#fff",
+                color: "#164c7e",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
             >
               Refresh
             </button>
           </div>
 
-          <div className="toolbar">
-            <div className="filters">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 14,
+              margin: "22px 0",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
               {(
                 ["all", "incoming", "outgoing", "pending"] as Filter[]
               ).map((value) => (
                 <button
                   key={value}
+                  type="button"
                   onClick={() => setFilter(value)}
-                  className={
-                    filter === value
-                      ? "filter-button active"
-                      : "filter-button"
-                  }
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: "1px solid #cbd5e1",
+                    background:
+                      filter === value ? "#164c7e" : "#fff",
+                    color:
+                      filter === value ? "#fff" : "#164c7e",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
                 >
                   {value.charAt(0).toUpperCase() +
                     value.slice(1)}
@@ -258,419 +400,162 @@ export default function StockTransfersPage() {
               placeholder="Search transfers or clinics..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="search-input"
+              style={{
+                padding: "11px 14px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                minWidth: 230,
+                maxWidth: "100%",
+              }}
             />
           </div>
 
           {loading ? (
-            <div className="empty-state">
+            <p style={{ padding: 25 }}>
               Loading stock transfers...
-            </div>
+            </p>
           ) : assigned.length === 0 ? (
-            <div className="empty-state">
-              No clinics are assigned to your account.
-              Contact the DoseTrack administrator.
-            </div>
+            <p style={{ padding: 25, color: "#64748b" }}>
+              No clinics assigned to your account.
+            </p>
           ) : visibleTransfers.length === 0 ? (
-            <div className="empty-state">
+            <div
+              style={{
+                textAlign: "center",
+                padding: "40px 20px",
+              }}
+            >
               <h3>No transfers found</h3>
-              <p>
-                New stock transfer requests will appear here.
+
+              <p style={{ color: "#64748b" }}>
+                Create your first stock transfer request.
               </p>
-              <Link
-                href="/nurse/stock/transfers/new"
-                className="primary-link"
+
+              <button
+                type="button"
+                onClick={openNewTransfer}
+                style={primaryButton}
               >
                 Create Transfer Request
-              </Link>
+              </button>
             </div>
           ) : (
-            <div className="transfer-list">
+            <div style={{ display: "grid", gap: 12 }}>
               {visibleTransfers.map((transfer) => (
-                <Link
+                <button
                   key={transfer.id}
-                  href={`/nurse/stock/transfers/${transfer.id}`}
-                  className="transfer-item"
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/nurse/stock/transfers/${transfer.id}`
+                    )
+                  }
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: 18,
+                    width: "100%",
+                    textAlign: "left",
+                    padding: 20,
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                  }}
                 >
-                  <div className="transfer-main">
-                    <div className="clinic-route">
-                      <strong>
-                        {clinicName(transfer.source_facility_id)}
-                      </strong>
-                      <span className="route-arrow">→</span>
-                      <strong>
-                        {clinicName(transfer.destination_facility_id)}
-                      </strong>
-                    </div>
+                  <div>
+                    <strong>
+                      {clinicName(
+                        transfer.source_facility_id
+                      )}
+                      {" → "}
+                      {clinicName(
+                        transfer.destination_facility_id
+                      )}
+                    </strong>
 
-                    <p>{transfer.reason}</p>
+                    <p style={{ color: "#64748b" }}>
+                      {transfer.reason || "No reason recorded"}
+                    </p>
 
-                    <span className="reference">
-                      Ref: {transfer.id.slice(0, 8).toUpperCase()}
-                    </span>
+                    <small style={{ color: "#94a3b8" }}>
+                      Ref:{" "}
+                      {transfer.id.slice(0, 8).toUpperCase()}
+                    </small>
                   </div>
 
-                  <div className="transfer-meta">
-                    <span
-                      className="status-pill"
-                      style={statusColor(transfer.status)}
-                    >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 14,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span style={statusStyle(transfer.status)}>
                       {transfer.status.replaceAll("_", " ")}
                     </span>
 
-                    <span className="date">
+                    <small style={{ color: "#64748b" }}>
                       {new Date(
                         transfer.created_at
                       ).toLocaleDateString("en-ZA")}
-                    </span>
+                    </small>
 
-                    <span className="open-text">
+                    <strong style={{ color: "#0f766e" }}>
                       View Details →
-                    </span>
+                    </strong>
                   </div>
-                </Link>
+                </button>
               ))}
             </div>
           )}
         </section>
 
-        <section className="workflow">
-          <h2>How Stock Transfers Work</h2>
+        <section
+          style={{
+            ...cardStyle,
+            background: "#edf7f5",
+            marginTop: 26,
+          }}
+        >
+          <h2>Stock Transfer Workflow</h2>
 
-          <div className="workflow-grid">
-            <div>
-              <strong>1. Request</strong>
-              <p>Receiving clinic requests medication stock.</p>
-            </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns:
+                "repeat(auto-fit,minmax(180px,1fr))",
+              gap: 18,
+            }}
+          >
+            {[
+              ["1. Request", "Receiving clinic requests stock."],
+              ["2. Approve", "Sending clinic approves."],
+              ["3. Dispatch", "Sending clinic dispatches stock."],
+              ["4. Receive", "Receiving clinic confirms receipt."],
+            ].map(([title, description]) => (
+              <div key={title}>
+                <strong style={{ color: "#0f766e" }}>
+                  {title}
+                </strong>
 
-            <div>
-              <strong>2. Approve</strong>
-              <p>Sending clinic approves the request.</p>
-            </div>
-
-            <div>
-              <strong>3. Dispatch</strong>
-              <p>Sending clinic records the stock dispatched.</p>
-            </div>
-
-            <div>
-              <strong>4. Receive</strong>
-              <p>Receiving clinic confirms physical receipt.</p>
-            </div>
+                <p
+                  style={{
+                    fontSize: 13,
+                    color: "#64748b",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {description}
+                </p>
+              </div>
+            ))}
           </div>
         </section>
       </div>
-
-      <style jsx global>{`
-        .transfer-page {
-          min-height: 100vh;
-          background: #f4f8fa;
-          padding: 30px 20px;
-          font-family: Arial, sans-serif;
-          color: #17333b;
-        }
-
-        .transfer-container {
-          max-width: 1180px;
-          margin: 0 auto;
-        }
-
-        .back-link {
-          color: #164c7e;
-          font-size: 13px;
-          font-weight: 700;
-          text-decoration: none;
-        }
-
-        .transfer-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 20px;
-          flex-wrap: wrap;
-          margin: 25px 0;
-        }
-
-        .transfer-header h1 {
-          font-size: 30px;
-          margin: 8px 0;
-        }
-
-        .eyebrow {
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: 1px;
-          color: #0f766e;
-        }
-
-        .subtitle {
-          color: #64748b;
-          max-width: 680px;
-          line-height: 1.6;
-        }
-
-        .primary-link {
-          display: inline-block;
-          background: #164c7e;
-          color: white;
-          padding: 13px 18px;
-          border-radius: 9px;
-          font-size: 13px;
-          font-weight: 700;
-          text-decoration: none;
-        }
-
-        .summary-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 16px;
-          margin-bottom: 28px;
-        }
-
-        .summary-card {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          background: white;
-          padding: 22px;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-        }
-
-        .summary-card span {
-          font-size: 13px;
-          color: #64748b;
-        }
-
-        .summary-card strong {
-          font-size: 29px;
-          color: #0f766e;
-        }
-
-        .transfer-panel {
-          background: white;
-          border: 1px solid #e2e8f0;
-          border-radius: 14px;
-          padding: 24px;
-        }
-
-        .panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 16px;
-        }
-
-        .panel-header h2 {
-          margin: 0;
-          font-size: 21px;
-        }
-
-        .panel-header p {
-          color: #64748b;
-          font-size: 13px;
-        }
-
-        .refresh-button {
-          padding: 10px 16px;
-          background: white;
-          border: 1px solid #cbd5e1;
-          border-radius: 8px;
-          color: #164c7e;
-          cursor: pointer;
-          font-weight: 700;
-        }
-
-        .toolbar {
-          display: flex;
-          justify-content: space-between;
-          flex-wrap: wrap;
-          gap: 14px;
-          margin: 22px 0;
-        }
-
-        .filters {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        .filter-button {
-          padding: 10px 14px;
-          border-radius: 8px;
-          border: 1px solid #cbd5e1;
-          background: white;
-          color: #164c7e;
-          font-weight: 700;
-          cursor: pointer;
-        }
-
-        .filter-button.active {
-          background: #164c7e;
-          color: white;
-          border-color: #164c7e;
-        }
-
-        .search-input {
-          padding: 11px 14px;
-          border: 1px solid #cbd5e1;
-          border-radius: 8px;
-          min-width: 240px;
-        }
-
-        .transfer-list {
-          display: grid;
-          gap: 12px;
-        }
-
-        .transfer-item {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 20px;
-          padding: 20px;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          text-decoration: none;
-          color: inherit;
-        }
-
-        .transfer-item:hover {
-          border-color: #0f766e;
-          background: #f8fdfc;
-        }
-
-        .clinic-route {
-          display: flex;
-          gap: 12px;
-          align-items: center;
-          flex-wrap: wrap;
-        }
-
-        .route-arrow {
-          color: #0f766e;
-          font-size: 20px;
-        }
-
-        .transfer-main p {
-          color: #64748b;
-          font-size: 14px;
-        }
-
-        .reference {
-          color: #94a3b8;
-          font-size: 12px;
-        }
-
-        .transfer-meta {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          gap: 10px;
-          white-space: nowrap;
-        }
-
-        .status-pill {
-          border-radius: 20px;
-          padding: 6px 12px;
-          font-size: 12px;
-          font-weight: 700;
-          text-transform: capitalize;
-        }
-
-        .date {
-          color: #64748b;
-          font-size: 12px;
-        }
-
-        .open-text {
-          color: #0f766e;
-          font-size: 12px;
-          font-weight: 700;
-        }
-
-        .empty-state {
-          padding: 45px 20px;
-          text-align: center;
-          color: #64748b;
-        }
-
-        .empty-state .primary-link {
-          margin-top: 14px;
-        }
-
-        .error-box {
-          background: #fff0f0;
-          color: #a02727;
-          padding: 14px;
-          border-radius: 8px;
-          margin-bottom: 20px;
-        }
-
-        .workflow {
-          background: #edf7f5;
-          border: 1px solid #d5eae5;
-          border-radius: 14px;
-          padding: 24px;
-          margin-top: 28px;
-        }
-
-        .workflow h2 {
-          font-size: 19px;
-        }
-
-        .workflow-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 16px;
-        }
-
-        .workflow-grid strong {
-          color: #0f766e;
-        }
-
-        .workflow-grid p {
-          color: #64748b;
-          font-size: 13px;
-          line-height: 1.6;
-        }
-
-        @media (max-width: 800px) {
-          .summary-grid,
-          .workflow-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 600px) {
-          .transfer-page {
-            padding: 18px 12px;
-          }
-
-          .summary-grid,
-          .workflow-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .transfer-item {
-            flex-direction: column;
-            align-items: flex-start;
-          }
-
-          .transfer-meta {
-            align-items: flex-start;
-          }
-
-          .transfer-panel {
-            padding: 16px;
-          }
-
-          .search-input {
-            min-width: 0;
-            width: 100%;
-          }
-        }
-      `}</style>
     </main>
   );
 }
