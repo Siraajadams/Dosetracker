@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { getAssignedFacilities } from "@/lib/fpStock";
@@ -24,7 +24,6 @@ type RequestItem = {
 
 export default function NewTransferPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [sites, setSites] = useState<Site[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -56,28 +55,43 @@ export default function NewTransferPage() {
 
         const facilities = await getAssignedFacilities();
 
-        const [siteResult, productResult] = await Promise.all([
-          supabase
-            .from("sites")
-            .select("id,site_name")
-            .order("site_name"),
+        const [siteResult, productResult] =
+          await Promise.all([
+            supabase
+              .from("sites")
+              .select("id,site_name")
+              .order("site_name"),
 
-          supabase
-            .from("fp_stock_products")
-            .select("id,name")
-            .order("name"),
-        ]);
+            supabase
+              .from("fp_stock_products")
+              .select("id,name")
+              .order("name"),
+          ]);
 
-        if (siteResult.error) throw siteResult.error;
-        if (productResult.error) throw productResult.error;
+        if (siteResult.error) {
+          throw siteResult.error;
+        }
+
+        if (productResult.error) {
+          throw productResult.error;
+        }
 
         if (cancelled) return;
 
         setAssigned(facilities);
         setSites((siteResult.data || []) as Site[]);
-        setProducts((productResult.data || []) as Product[]);
+        setProducts(
+          (productResult.data || []) as Product[]
+        );
 
-        const requestedSite = searchParams.get("site_id");
+        // FIX:
+        // Read query parameters only in the browser.
+        // This avoids the useSearchParams prerender error.
+        const params = new URLSearchParams(
+          window.location.search
+        );
+
+        const requestedSite = params.get("site_id");
 
         if (
           requestedSite &&
@@ -96,7 +110,9 @@ export default function NewTransferPage() {
           );
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
@@ -105,7 +121,7 @@ export default function NewTransferPage() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams]);
+  }, []);
 
   function updateItem(
     index: number,
@@ -114,7 +130,9 @@ export default function NewTransferPage() {
   ) {
     setItems((previous) =>
       previous.map((item, i) =>
-        i === index ? { ...item, [field]: value } : item
+        i === index
+          ? { ...item, [field]: value }
+          : item
       )
     );
   }
@@ -136,6 +154,7 @@ export default function NewTransferPage() {
     event: React.FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
+
     if (saving) return;
 
     setError("");
@@ -146,7 +165,9 @@ export default function NewTransferPage() {
     }
 
     if (source === destination) {
-      setError("Sending and receiving clinics must differ.");
+      setError(
+        "Sending and receiving clinics must differ."
+      );
       return;
     }
 
@@ -167,7 +188,10 @@ export default function NewTransferPage() {
       items.some(
         (item) =>
           !item.product_id ||
-          !Number.isSafeInteger(Number(item.quantity)) ||
+          item.quantity.trim() === "" ||
+          !Number.isSafeInteger(
+            Number(item.quantity)
+          ) ||
           Number(item.quantity) <= 0
       )
     ) {
@@ -177,9 +201,14 @@ export default function NewTransferPage() {
       return;
     }
 
-    const productIds = items.map((item) => item.product_id);
+    const productIds = items.map(
+      (item) => item.product_id
+    );
 
-    if (new Set(productIds).size !== productIds.length) {
+    if (
+      new Set(productIds).size !==
+      productIds.length
+    ) {
       setError(
         "Each medication must appear only once. Combine quantities for duplicate medications."
       );
@@ -193,13 +222,18 @@ export default function NewTransferPage() {
         await supabase.auth.getUser();
 
       if (authError || !auth.user) {
-        throw new Error("Your session has expired.");
+        throw new Error(
+          "Your session has expired."
+        );
       }
 
       // Recheck clinic assignment before submitting.
-      const currentFacilities = await getAssignedFacilities();
+      const currentFacilities =
+        await getAssignedFacilities();
 
-      if (!currentFacilities.includes(destination)) {
+      if (
+        !currentFacilities.includes(destination)
+      ) {
         throw new Error(
           "You no longer have access to the receiving clinic."
         );
@@ -207,32 +241,42 @@ export default function NewTransferPage() {
 
       const payload = items.map((item) => ({
         product_id: item.product_id,
-        quantity_requested: Number(item.quantity),
+        quantity_requested: Number(
+          item.quantity
+        ),
       }));
 
-      // This RPC must exist in Supabase.
-      // It must validate clinic permissions and create
-      // the transfer and items in one transaction.
-      const { data, error: rpcError } = await supabase.rpc(
-        "fp_request_stock_transfer",
-        {
-          p_source: source,
-          p_destination: destination,
-          p_reason: reason.trim(),
-          p_items: payload,
-        }
-      );
+      // Supabase must have this RPC.
+      // The RPC must enforce permissions and
+      // create the request atomically.
+      const { data, error: rpcError } =
+        await supabase.rpc(
+          "fp_request_stock_transfer",
+          {
+            p_source: source,
+            p_destination: destination,
+            p_reason: reason.trim(),
+            p_items: payload,
+          }
+        );
 
-      if (rpcError) throw rpcError;
+      if (rpcError) {
+        throw rpcError;
+      }
 
-      if (typeof data !== "string" || !data) {
+      if (
+        typeof data !== "string" ||
+        !data
+      ) {
         throw new Error(
           "The server did not return a transfer ID."
         );
       }
 
       router.push(
-        `/nurse/stock/transfers/${encodeURIComponent(data)}`
+        `/nurse/stock/transfers/${encodeURIComponent(
+          data
+        )}`
       );
     } catch (err) {
       setError(
@@ -265,25 +309,33 @@ export default function NewTransferPage() {
             DOSETRACK / STOCK MANAGEMENT
           </p>
 
-          <h1>New Inter-Clinic Stock Transfer</h1>
+          <h1>
+            New Inter-Clinic Stock Transfer
+          </h1>
 
           <p style={styles.muted}>
-            Request medication stock from another clinic.
-            The sending clinic must approve and dispatch
-            the request before receipt can be confirmed.
+            Request medication stock from
+            another clinic. The sending clinic
+            must approve and dispatch the
+            request before receipt can be
+            confirmed.
           </p>
         </header>
 
         {error && (
-          <div role="alert" style={styles.error}>
+          <div
+            role="alert"
+            style={styles.error}
+          >
             {error}
           </div>
         )}
 
         {assigned.length === 0 && (
           <div style={styles.error}>
-            No assigned receiving clinics were found.
-            Contact the DoseTrack administrator.
+            No assigned receiving clinics were
+            found. Contact the DoseTrack
+            administrator.
           </div>
         )}
 
@@ -298,15 +350,25 @@ export default function NewTransferPage() {
             <select
               required
               value={source}
-              onChange={(e) => setSource(e.target.value)}
+              onChange={(e) =>
+                setSource(e.target.value)
+              }
               style={styles.input}
             >
-              <option value="">Select sending clinic</option>
+              <option value="">
+                Select sending clinic
+              </option>
 
               {sites
-                .filter((site) => site.id !== destination)
+                .filter(
+                  (site) =>
+                    site.id !== destination
+                )
                 .map((site) => (
-                  <option key={site.id} value={site.id}>
+                  <option
+                    key={site.id}
+                    value={site.id}
+                  >
                     {site.site_name}
                   </option>
                 ))}
@@ -319,19 +381,28 @@ export default function NewTransferPage() {
             <select
               required
               value={destination}
-              onChange={(e) => setDestination(e.target.value)}
+              onChange={(e) =>
+                setDestination(e.target.value)
+              }
               style={styles.input}
             >
-              <option value="">Select receiving clinic</option>
+              <option value="">
+                Select receiving clinic
+              </option>
 
               {sites
                 .filter(
                   (site) =>
-                    assigned.includes(site.id) &&
+                    assigned.includes(
+                      site.id
+                    ) &&
                     site.id !== source
                 )
                 .map((site) => (
-                  <option key={site.id} value={site.id}>
+                  <option
+                    key={site.id}
+                    value={site.id}
+                  >
                     {site.site_name}
                   </option>
                 ))}
@@ -344,7 +415,9 @@ export default function NewTransferPage() {
             <textarea
               required
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(e) =>
+                setReason(e.target.value)
+              }
               placeholder="Example: Insufficient stock to meet patient demand"
               rows={3}
               style={styles.input}
@@ -354,10 +427,26 @@ export default function NewTransferPage() {
           <section style={styles.card}>
             <h2>Medications Requested</h2>
 
+            <p style={styles.muted}>
+              Select one or more medications
+              and enter the quantity required
+              for each.
+            </p>
+
             {items.map((item, index) => (
-              <div key={index} style={styles.itemRow}>
-                <div style={{ flex: 2, minWidth: 200 }}>
-                  <label style={styles.label}>
+              <div
+                key={index}
+                style={styles.itemRow}
+              >
+                <div
+                  style={{
+                    flex: 2,
+                    minWidth: 200,
+                  }}
+                >
+                  <label
+                    style={styles.label}
+                  >
                     Medication
                   </label>
 
@@ -377,19 +466,28 @@ export default function NewTransferPage() {
                       Select medication
                     </option>
 
-                    {products.map((product) => (
-                      <option
-                        key={product.id}
-                        value={product.id}
-                      >
-                        {product.name}
-                      </option>
-                    ))}
+                    {products.map(
+                      (product) => (
+                        <option
+                          key={product.id}
+                          value={product.id}
+                        >
+                          {product.name}
+                        </option>
+                      )
+                    )}
                   </select>
                 </div>
 
-                <div style={{ flex: 1, minWidth: 120 }}>
-                  <label style={styles.label}>
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 120,
+                  }}
+                >
+                  <label
+                    style={styles.label}
+                  >
                     Quantity
                   </label>
 
@@ -413,8 +511,12 @@ export default function NewTransferPage() {
                 {items.length > 1 && (
                   <button
                     type="button"
-                    onClick={() => removeItem(index)}
-                    style={styles.removeButton}
+                    onClick={() =>
+                      removeItem(index)
+                    }
+                    style={
+                      styles.removeButton
+                    }
                   >
                     Remove
                   </button>
@@ -425,20 +527,26 @@ export default function NewTransferPage() {
             <button
               type="button"
               onClick={addItem}
-              style={styles.secondaryButton}
+              style={
+                styles.secondaryButton
+              }
             >
               + Add Another Medication
             </button>
           </section>
 
           <section style={styles.card}>
-            <h2>Submit Transfer Request</h2>
+            <h2>
+              Submit Transfer Request
+            </h2>
 
             <p style={styles.muted}>
-              Submitting creates a pending request.
-              Stock must not be deducted or added
-              until the appropriate dispatch and
-              receipt transactions are processed.
+              Submitting creates a pending
+              request. Stock must not be
+              deducted or added until the
+              appropriate dispatch and
+              receipt transactions are
+              processed.
             </p>
 
             <button
@@ -450,7 +558,12 @@ export default function NewTransferPage() {
               }
               style={{
                 ...styles.primaryButton,
-                opacity: saving ? 0.6 : 1,
+                opacity:
+                  saving ||
+                  assigned.length === 0 ||
+                  products.length === 0
+                    ? 0.6
+                    : 1,
               }}
             >
               {saving
@@ -464,7 +577,10 @@ export default function NewTransferPage() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<
+  string,
+  React.CSSProperties
+> = {
   page: {
     minHeight: "100vh",
     background: "#f4f8fa",
@@ -472,20 +588,24 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "Arial, sans-serif",
     color: "#17333b",
   },
+
   container: {
     maxWidth: 950,
     margin: "0 auto",
   },
+
   eyebrow: {
     fontSize: 12,
     color: "#0f766e",
     fontWeight: 800,
     letterSpacing: 1,
   },
+
   muted: {
     color: "#64748b",
     lineHeight: 1.6,
   },
+
   card: {
     background: "#ffffff",
     border: "1px solid #e2e8f0",
@@ -493,6 +613,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 24,
     marginBottom: 20,
   },
+
   label: {
     display: "block",
     marginTop: 16,
@@ -500,6 +621,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     fontSize: 14,
   },
+
   input: {
     display: "block",
     width: "100%",
@@ -511,6 +633,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: "white",
     color: "#17333b",
   },
+
   itemRow: {
     display: "flex",
     alignItems: "flex-end",
@@ -518,8 +641,10 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: "wrap",
     marginBottom: 18,
     paddingBottom: 18,
-    borderBottom: "1px solid #e2e8f0",
+    borderBottom:
+      "1px solid #e2e8f0",
   },
+
   primaryButton: {
     padding: "14px 22px",
     background: "#164c7e",
@@ -529,6 +654,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontWeight: 700,
   },
+
   secondaryButton: {
     padding: "12px 18px",
     background: "white",
@@ -538,6 +664,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontWeight: 700,
   },
+
   removeButton: {
     padding: "12px 16px",
     background: "#fff0f0",
@@ -546,6 +673,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     cursor: "pointer",
   },
+
   error: {
     background: "#fff0f0",
     color: "#991b1b",
