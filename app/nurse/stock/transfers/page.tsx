@@ -2,6 +2,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { getAssignedFacilities } from "@/lib/fpStock";
@@ -126,18 +127,12 @@ export default function StockTransfersPage() {
     return sites.find((s) => s.id === id)?.site_name || id;
   }
 
-  function openNewTransfer() {
-    const path = "/nurse/stock/transfers/new";
-
-    if (assigned.length === 1) {
-      router.push(
-        `${path}?site_id=${encodeURIComponent(assigned[0])}`
-      );
-      return;
-    }
-
-    router.push(path);
-  }
+  const newTransferHref =
+    assigned.length === 1
+      ? `/nurse/stock/transfers/new?site_id=${encodeURIComponent(
+          assigned[0]
+        )}`
+      : "/nurse/stock/transfers/new";
 
   const visibleTransfers = transfers.filter((transfer) => {
     if (
@@ -264,13 +259,17 @@ export default function StockTransfersPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={openNewTransfer}
-            style={primaryButton}
+          <Link
+            href={newTransferHref}
+            style={{
+              ...primaryButton,
+              display: "inline-block",
+              textDecoration: "none",
+              textAlign: "center",
+            }}
           >
             + New Transfer Request
-          </button>
+          </Link>
         </header>
 
         {error && (
@@ -431,13 +430,17 @@ export default function StockTransfersPage() {
                 Create your first stock transfer request.
               </p>
 
-              <button
-                type="button"
-                onClick={openNewTransfer}
-                style={primaryButton}
+              <Link
+                href={newTransferHref}
+                style={{
+                  ...primaryButton,
+                  display: "inline-block",
+                  textDecoration: "none",
+                  textAlign: "center",
+                }}
               >
                 Create Transfer Request
-              </button>
+              </Link>
             </div>
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
@@ -447,7 +450,9 @@ export default function StockTransfersPage() {
                   type="button"
                   onClick={() =>
                     router.push(
-                      `/nurse/stock/transfers/${transfer.id}`
+                      `/nurse/stock/transfers/${encodeURIComponent(
+                        transfer.id
+                      )}`
                     )
                   }
                   style={{
