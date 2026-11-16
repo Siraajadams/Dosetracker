@@ -2,470 +2,672 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { getAssignedFacilities } from "@/lib/fpStock";
 
-type StockModule = {
-  title: string;
-  description: string;
-  href: string;
-  icon: string;
-  category: "INVENTORY" | "ORDERING";
+type Transfer = {
+  id: string;
+  source_facility_id: string;
+  destination_facility_id: string;
+  status: string;
+  reason: string;
+  created_at: string;
 };
 
-const modules: StockModule[] = [
-  {
-    title: "Stock Received",
-    description:
-      "Record medication deliveries, quantities, batch numbers and expiry dates.",
-    href: "/nurse/stock/received",
-    icon: "📦",
-    category: "INVENTORY",
-  },
-  {
-    title: "Stock Dispensed",
-    description:
-      "Record medication quantities issued from clinic inventory.",
-    href: "/nurse/stock/dispensed",
-    icon: "💊",
-    category: "INVENTORY",
-  },
-  {
-    title: "Stock Wasted",
-    description:
-      "Record expired, damaged or wasted medication stock.",
-    href: "/nurse/stock/wasted",
-    icon: "🗑️",
-    category: "INVENTORY",
-  },
-  {
-    title: "Medication Reorder",
-    description:
-      "Prepare medication replenishment orders for the depot.",
-    href: "/nurse/stock/reorder",
-    icon: "🛒",
-    category: "ORDERING",
-  },
-  {
-    title: "Medication Orders",
-    description:
-      "View depot orders, submission status, received quantities and outstanding stock.",
-    href: "/nurse/stock/orders",
-    icon: "📋",
-    category: "ORDERING",
-  },
-  {
-    title: "Inter-Clinic Stock Transfers",
-    description:
-      "Request stock from another clinic, approve transfers, dispatch medications and confirm stock received.",
-    href: "/nurse/stock/transfers",
-    icon: "🔄",
-    category: "ORDERING",
-  },
-];
+type Site = {
+  id: string;
+  site_name: string;
+};
 
-export default function StockDashboardPage() {
+type Filter = "all" | "incoming" | "outgoing" | "pending";
+
+export default function StockTransfersPage() {
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [assigned, setAssigned] = useState<string[]>([]);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [authenticated, setAuthenticated] =
-    useState(false);
-  const [assignedCount, setAssignedCount] =
-    useState(0);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadTransfers = useCallback(async () => {
+    setLoading(true);
+    setError("");
 
-    async function loadDashboard() {
-      try {
-        const { data, error: authError } =
-          await supabase.auth.getUser();
+    try {
+      const { data: auth, error: authError } =
+        await supabase.auth.getUser();
 
-        if (authError || !data.user) {
-          throw new Error(
-            "Please sign in to access stock management."
-          );
-        }
-
-        if (cancelled) return;
-
-        setAuthenticated(true);
-
-        const facilities =
-          await getAssignedFacilities();
-
-        if (cancelled) return;
-
-        setAssignedCount(facilities.length);
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Unable to load stock dashboard."
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+      if (authError || !auth.user) {
+        throw new Error("Please sign in to access stock transfers.");
       }
+
+      const facilities = await getAssignedFacilities();
+      setAssigned(facilities);
+
+      if (facilities.length === 0) {
+        setTransfers([]);
+        setSites([]);
+        return;
+      }
+
+      const [transferResult, siteResult] = await Promise.all([
+        supabase
+          .from("fp_stock_transfers")
+          .select(
+            "id,source_facility_id,destination_facility_id,status,reason,created_at"
+          )
+          .order("created_at", { ascending: false })
+          .limit(500),
+
+        supabase
+          .from("sites")
+          .select("id,site_name")
+          .order("site_name"),
+      ]);
+
+      if (transferResult.error) throw transferResult.error;
+      if (siteResult.error) throw siteResult.error;
+
+      const accessible = (
+        (transferResult.data || []) as Transfer[]
+      ).filter(
+        (t) =>
+          facilities.includes(t.source_facility_id) ||
+          facilities.includes(t.destination_facility_id)
+      );
+
+      setTransfers(accessible);
+      setSites((siteResult.data || []) as Site[]);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load stock transfers."
+      );
+    } finally {
+      setLoading(false);
     }
-
-    void loadDashboard();
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
-  const inventoryModules = modules.filter(
-    (module) => module.category === "INVENTORY"
-  );
+  useEffect(() => {
+    void loadTransfers();
+  }, [loadTransfers]);
 
-  const orderingModules = modules.filter(
-    (module) => module.category === "ORDERING"
-  );
+  function clinicName(id: string) {
+    return sites.find((s) => s.id === id)?.site_name || id;
+  }
 
-  function renderModule(module: StockModule) {
-    return (
-      <Link
-        key={module.href}
-        href={module.href}
-        className="stock-card"
-      >
-        <span className="stock-icon">
-          {module.icon}
-        </span>
+  const visibleTransfers = transfers.filter((transfer) => {
+    if (
+      filter === "incoming" &&
+      !assigned.includes(transfer.destination_facility_id)
+    ) {
+      return false;
+    }
 
-        <h3>{module.title}</h3>
+    if (
+      filter === "outgoing" &&
+      !assigned.includes(transfer.source_facility_id)
+    ) {
+      return false;
+    }
 
-        <p>{module.description}</p>
+    if (
+      filter === "pending" &&
+      !["requested", "approved", "dispatched"].includes(
+        transfer.status
+      )
+    ) {
+      return false;
+    }
 
-        <span className="stock-open">
-          Open Module →
-        </span>
-      </Link>
-    );
+    const term = search.trim().toLowerCase();
+
+    if (!term) return true;
+
+    return [
+      transfer.id,
+      transfer.reason,
+      transfer.status,
+      clinicName(transfer.source_facility_id),
+      clinicName(transfer.destination_facility_id),
+    ].some((value) => value.toLowerCase().includes(term));
+  });
+
+  const pendingCount = transfers.filter((t) =>
+    ["requested", "approved", "dispatched"].includes(t.status)
+  ).length;
+
+  const completedCount = transfers.filter(
+    (t) => t.status === "received"
+  ).length;
+
+  function statusColor(status: string): React.CSSProperties {
+    if (status === "received") {
+      return { background: "#dcfce7", color: "#166534" };
+    }
+
+    if (status === "dispatched") {
+      return { background: "#dbeafe", color: "#1d4ed8" };
+    }
+
+    if (status === "approved") {
+      return { background: "#ccfbf1", color: "#0f766e" };
+    }
+
+    if (status === "cancelled") {
+      return { background: "#fee2e2", color: "#991b1b" };
+    }
+
+    return { background: "#fef3c7", color: "#92400e" };
   }
 
   return (
-    <main className="stock-page">
-      <div className="stock-container">
-        <header className="stock-header">
+    <main className="transfer-page">
+      <div className="transfer-container">
+        <Link href="/nurse/stock" className="back-link">
+          ← Stock Management
+        </Link>
+
+        <header className="transfer-header">
           <div>
-            <p className="stock-eyebrow">
-              DOSETRACK / FAMILY PLANNING
-            </p>
-
-            <h1>Stock Management</h1>
-
-            <p className="stock-subtitle">
-              Manage medication inventory,
-              stock movements, depot orders and
-              inter-clinic stock transfers across
-              your assigned clinics.
+            <p className="eyebrow">DOSETRACK / FAMILY PLANNING</p>
+            <h1>Inter-Clinic Stock Transfers</h1>
+            <p className="subtitle">
+              Request medication stock, manage approvals,
+              dispatch stock and confirm receipt between clinics.
             </p>
           </div>
 
           <Link
-            href="/family-planning/dashboard"
-            className="stock-back"
+            href="/nurse/stock/transfers/new"
+            className="primary-link"
           >
-            ← Back to Dashboard
+            + New Transfer Request
           </Link>
         </header>
 
-        {loading ? (
-          <section className="stock-notice">
-            Loading stock management...
-          </section>
-        ) : error ? (
-          <section
-            className="stock-notice error"
-            role="alert"
-          >
-            <p>{error}</p>
-
-            {!authenticated && (
-              <Link href="/family-planning/login">
-                Sign In
-              </Link>
-            )}
-          </section>
-        ) : (
-          <>
-            <section className="stock-overview">
-              <div>
-                <span>Assigned Clinics</span>
-                <strong>{assignedCount}</strong>
-              </div>
-
-              <div>
-                <span>Inventory Modules</span>
-                <strong>
-                  {inventoryModules.length}
-                </strong>
-              </div>
-
-              <div>
-                <span>Ordering & Transfer Modules</span>
-                <strong>
-                  {orderingModules.length}
-                </strong>
-              </div>
-            </section>
-
-            {assignedCount === 0 && (
-              <section className="stock-notice">
-                No clinics are currently assigned
-                to your account. Contact the
-                DoseTrack administrator.
-              </section>
-            )}
-
-            <section>
-              <h2 className="stock-section-title">
-                Inventory Management
-              </h2>
-
-              <div className="stock-grid">
-                {inventoryModules.map(renderModule)}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="stock-section-title">
-                Depot Ordering & Stock Transfers
-              </h2>
-
-              <div className="stock-grid">
-                {orderingModules.map(renderModule)}
-              </div>
-            </section>
-
-            <section className="stock-info">
-              <h2>Stock Management Workflow</h2>
-
-              <p>
-                DoseTrack supports medication
-                stock received, dispensed and wasted,
-                as well as depot replenishment
-                orders and transfers between clinics.
-              </p>
-
-              <p>
-                Inter-clinic transfers require
-                approval from the sending clinic
-                before dispatch. The receiving
-                clinic must confirm receipt before
-                the transferred stock is added
-                to its inventory.
-              </p>
-            </section>
-          </>
+        {error && (
+          <div className="error-box" role="alert">
+            {error}
+          </div>
         )}
+
+        <section className="summary-grid">
+          <div className="summary-card">
+            <span>Total Transfers</span>
+            <strong>{transfers.length}</strong>
+          </div>
+
+          <div className="summary-card">
+            <span>Pending / In Progress</span>
+            <strong>{pendingCount}</strong>
+          </div>
+
+          <div className="summary-card">
+            <span>Completed Transfers</span>
+            <strong>{completedCount}</strong>
+          </div>
+
+          <div className="summary-card">
+            <span>Assigned Clinics</span>
+            <strong>{assigned.length}</strong>
+          </div>
+        </section>
+
+        <section className="transfer-panel">
+          <div className="panel-header">
+            <div>
+              <h2>Transfer Register</h2>
+              <p>Incoming and outgoing medication transfers</p>
+            </div>
+
+            <button
+              className="refresh-button"
+              onClick={() => void loadTransfers()}
+              disabled={loading}
+            >
+              Refresh
+            </button>
+          </div>
+
+          <div className="toolbar">
+            <div className="filters">
+              {(
+                ["all", "incoming", "outgoing", "pending"] as Filter[]
+              ).map((value) => (
+                <button
+                  key={value}
+                  onClick={() => setFilter(value)}
+                  className={
+                    filter === value
+                      ? "filter-button active"
+                      : "filter-button"
+                  }
+                >
+                  {value.charAt(0).toUpperCase() +
+                    value.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            <input
+              type="search"
+              placeholder="Search transfers or clinics..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="search-input"
+            />
+          </div>
+
+          {loading ? (
+            <div className="empty-state">
+              Loading stock transfers...
+            </div>
+          ) : assigned.length === 0 ? (
+            <div className="empty-state">
+              No clinics are assigned to your account.
+              Contact the DoseTrack administrator.
+            </div>
+          ) : visibleTransfers.length === 0 ? (
+            <div className="empty-state">
+              <h3>No transfers found</h3>
+              <p>
+                New stock transfer requests will appear here.
+              </p>
+              <Link
+                href="/nurse/stock/transfers/new"
+                className="primary-link"
+              >
+                Create Transfer Request
+              </Link>
+            </div>
+          ) : (
+            <div className="transfer-list">
+              {visibleTransfers.map((transfer) => (
+                <Link
+                  key={transfer.id}
+                  href={`/nurse/stock/transfers/${transfer.id}`}
+                  className="transfer-item"
+                >
+                  <div className="transfer-main">
+                    <div className="clinic-route">
+                      <strong>
+                        {clinicName(transfer.source_facility_id)}
+                      </strong>
+                      <span className="route-arrow">→</span>
+                      <strong>
+                        {clinicName(transfer.destination_facility_id)}
+                      </strong>
+                    </div>
+
+                    <p>{transfer.reason}</p>
+
+                    <span className="reference">
+                      Ref: {transfer.id.slice(0, 8).toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div className="transfer-meta">
+                    <span
+                      className="status-pill"
+                      style={statusColor(transfer.status)}
+                    >
+                      {transfer.status.replaceAll("_", " ")}
+                    </span>
+
+                    <span className="date">
+                      {new Date(
+                        transfer.created_at
+                      ).toLocaleDateString("en-ZA")}
+                    </span>
+
+                    <span className="open-text">
+                      View Details →
+                    </span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="workflow">
+          <h2>How Stock Transfers Work</h2>
+
+          <div className="workflow-grid">
+            <div>
+              <strong>1. Request</strong>
+              <p>Receiving clinic requests medication stock.</p>
+            </div>
+
+            <div>
+              <strong>2. Approve</strong>
+              <p>Sending clinic approves the request.</p>
+            </div>
+
+            <div>
+              <strong>3. Dispatch</strong>
+              <p>Sending clinic records the stock dispatched.</p>
+            </div>
+
+            <div>
+              <strong>4. Receive</strong>
+              <p>Receiving clinic confirms physical receipt.</p>
+            </div>
+          </div>
+        </section>
       </div>
 
       <style jsx global>{`
-        .stock-page {
+        .transfer-page {
           min-height: 100vh;
-          padding: 30px 20px;
           background: #f4f8fa;
+          padding: 30px 20px;
           font-family: Arial, sans-serif;
           color: #17333b;
         }
 
-        .stock-container {
+        .transfer-container {
           max-width: 1180px;
           margin: 0 auto;
         }
 
-        .stock-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 20px;
-          flex-wrap: wrap;
-          margin-bottom: 30px;
-        }
-
-        .stock-eyebrow {
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: 1.3px;
-          color: #0f766e;
-        }
-
-        .stock-header h1 {
-          font-size: 32px;
-          margin: 8px 0;
-        }
-
-        .stock-subtitle {
-          max-width: 700px;
-          line-height: 1.6;
-          color: #64748b;
-        }
-
-        .stock-back {
-          display: inline-block;
-          padding: 12px 16px;
-          border-radius: 9px;
-          background: white;
+        .back-link {
           color: #164c7e;
-          border: 1px solid #d8e2e8;
           font-size: 13px;
           font-weight: 700;
           text-decoration: none;
         }
 
-        .stock-overview {
-          display: grid;
-          grid-template-columns:
-            repeat(3, minmax(0, 1fr));
-          gap: 16px;
-          margin-bottom: 30px;
-        }
-
-        .stock-overview > div {
-          background: white;
-          border: 1px solid #e1e8ed;
-          border-radius: 12px;
-          padding: 22px;
+        .transfer-header {
           display: flex;
-          flex-direction: column;
-          gap: 12px;
+          justify-content: space-between;
+          align-items: center;
+          gap: 20px;
+          flex-wrap: wrap;
+          margin: 25px 0;
         }
 
-        .stock-overview span {
-          font-size: 13px;
-          color: #64748b;
-        }
-
-        .stock-overview strong {
+        .transfer-header h1 {
           font-size: 30px;
+          margin: 8px 0;
+        }
+
+        .eyebrow {
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 1px;
           color: #0f766e;
         }
 
-        .stock-section-title {
-          margin: 28px 0 18px;
-          font-size: 21px;
-        }
-
-        .stock-grid {
-          display: grid;
-          grid-template-columns:
-            repeat(3, minmax(0, 1fr));
-          gap: 18px;
-        }
-
-        .stock-card {
-          display: flex;
-          flex-direction: column;
-          padding: 24px;
-          border: 1px solid #e1e8ed;
-          border-radius: 14px;
-          background: white;
-          color: inherit;
-          text-decoration: none;
-          transition:
-            transform 0.15s ease,
-            box-shadow 0.15s ease;
-        }
-
-        .stock-card:hover {
-          transform: translateY(-3px);
-          box-shadow:
-            0 8px 24px rgba(0, 0, 0, 0.07);
-        }
-
-        .stock-icon {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          width: 50px;
-          height: 50px;
-          border-radius: 12px;
-          background: #edf7f5;
-          font-size: 25px;
-        }
-
-        .stock-card h3 {
-          font-size: 18px;
-          margin: 18px 0 8px;
-        }
-
-        .stock-card p {
-          flex: 1;
+        .subtitle {
           color: #64748b;
-          font-size: 14px;
+          max-width: 680px;
           line-height: 1.6;
         }
 
-        .stock-open {
+        .primary-link {
           display: inline-block;
-          margin-top: 18px;
+          background: #164c7e;
+          color: white;
+          padding: 13px 18px;
+          border-radius: 9px;
           font-size: 13px;
-          font-weight: 800;
+          font-weight: 700;
+          text-decoration: none;
+        }
+
+        .summary-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 16px;
+          margin-bottom: 28px;
+        }
+
+        .summary-card {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          background: white;
+          padding: 22px;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+        }
+
+        .summary-card span {
+          font-size: 13px;
+          color: #64748b;
+        }
+
+        .summary-card strong {
+          font-size: 29px;
           color: #0f766e;
         }
 
-        .stock-notice {
+        .transfer-panel {
           background: white;
-          border: 1px solid #e1e8ed;
-          border-radius: 12px;
-          padding: 20px;
-          margin-bottom: 24px;
+          border: 1px solid #e2e8f0;
+          border-radius: 14px;
+          padding: 24px;
         }
 
-        .stock-notice.error {
+        .panel-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .panel-header h2 {
+          margin: 0;
+          font-size: 21px;
+        }
+
+        .panel-header p {
+          color: #64748b;
+          font-size: 13px;
+        }
+
+        .refresh-button {
+          padding: 10px 16px;
+          background: white;
+          border: 1px solid #cbd5e1;
+          border-radius: 8px;
+          color: #164c7e;
+          cursor: pointer;
+          font-weight: 700;
+        }
+
+        .toolbar {
+          display: flex;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 14px;
+          margin: 22px 0;
+        }
+
+        .filters {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .filter-button {
+          padding: 10px 14px;
+          border-radius: 8px;
+          border: 1px solid #cbd5e1;
+          background: white;
+          color: #164c7e;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .filter-button.active {
+          background: #164c7e;
+          color: white;
+          border-color: #164c7e;
+        }
+
+        .search-input {
+          padding: 11px 14px;
+          border: 1px solid #cbd5e1;
+          border-radius: 8px;
+          min-width: 240px;
+        }
+
+        .transfer-list {
+          display: grid;
+          gap: 12px;
+        }
+
+        .transfer-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 20px;
+          padding: 20px;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          text-decoration: none;
+          color: inherit;
+        }
+
+        .transfer-item:hover {
+          border-color: #0f766e;
+          background: #f8fdfc;
+        }
+
+        .clinic-route {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .route-arrow {
+          color: #0f766e;
+          font-size: 20px;
+        }
+
+        .transfer-main p {
+          color: #64748b;
+          font-size: 14px;
+        }
+
+        .reference {
+          color: #94a3b8;
+          font-size: 12px;
+        }
+
+        .transfer-meta {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 10px;
+          white-space: nowrap;
+        }
+
+        .status-pill {
+          border-radius: 20px;
+          padding: 6px 12px;
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: capitalize;
+        }
+
+        .date {
+          color: #64748b;
+          font-size: 12px;
+        }
+
+        .open-text {
+          color: #0f766e;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .empty-state {
+          padding: 45px 20px;
+          text-align: center;
+          color: #64748b;
+        }
+
+        .empty-state .primary-link {
+          margin-top: 14px;
+        }
+
+        .error-box {
           background: #fff0f0;
           color: #a02727;
+          padding: 14px;
+          border-radius: 8px;
+          margin-bottom: 20px;
         }
 
-        .stock-info {
+        .workflow {
           background: #edf7f5;
           border: 1px solid #d5eae5;
           border-radius: 14px;
           padding: 24px;
-          margin-top: 30px;
+          margin-top: 28px;
         }
 
-        .stock-info h2 {
-          font-size: 18px;
-          margin-top: 0;
+        .workflow h2 {
+          font-size: 19px;
         }
 
-        .stock-info p {
-          font-size: 14px;
-          line-height: 1.7;
-          color: #475569;
+        .workflow-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 16px;
         }
 
-        @media (max-width: 900px) {
-          .stock-grid {
-            grid-template-columns:
-              repeat(2, minmax(0, 1fr));
+        .workflow-grid strong {
+          color: #0f766e;
+        }
+
+        .workflow-grid p {
+          color: #64748b;
+          font-size: 13px;
+          line-height: 1.6;
+        }
+
+        @media (max-width: 800px) {
+          .summary-grid,
+          .workflow-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
           }
         }
 
-        @media (max-width: 650px) {
-          .stock-page {
+        @media (max-width: 600px) {
+          .transfer-page {
             padding: 18px 12px;
           }
 
-          .stock-grid,
-          .stock-overview {
+          .summary-grid,
+          .workflow-grid {
             grid-template-columns: 1fr;
           }
 
-          .stock-header h1 {
-            font-size: 26px;
+          .transfer-item {
+            flex-direction: column;
+            align-items: flex-start;
           }
 
-          .stock-card {
-            padding: 20px;
+          .transfer-meta {
+            align-items: flex-start;
+          }
+
+          .transfer-panel {
+            padding: 16px;
+          }
+
+          .search-input {
+            min-width: 0;
+            width: 100%;
           }
         }
       `}</style>
