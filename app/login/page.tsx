@@ -1,6 +1,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -50,7 +51,7 @@ export default function LoginPage() {
         return;
       }
 
-      // Step 2: Check Super Admin permissions
+      // Step 2: Check Super Administrator permissions
       const { data: isAdmin, error: adminError } =
         await supabase.rpc("dt_is_super_admin");
 
@@ -64,7 +65,7 @@ export default function LoginPage() {
         return;
       }
 
-      // Step 3: Retrieve staff profile
+      // Step 3: Retrieve healthcare worker profile
       const { data: profile, error: profileError } =
         await supabase
           .from("staff_profiles")
@@ -79,7 +80,7 @@ export default function LoginPage() {
 
       if (!profile) {
         setMessage(
-          "Staff profile not found. Contact your administrator."
+          "Healthcare worker profile not found. Contact your administrator."
         );
         return;
       }
@@ -90,7 +91,7 @@ export default function LoginPage() {
         return;
       }
 
-      // Step 5: Check staff approval
+      // Step 5: Check healthcare worker approval
       if (
         profile.approval_status !== "approved" ||
         profile.is_active !== true
@@ -99,7 +100,8 @@ export default function LoginPage() {
         return;
       }
 
-      // Step 6: Redirect approved nurses
+      // Step 6: Redirect approved healthcare workers
+      // Keep existing internal role and route unchanged.
       if (profile.role === "nurse") {
         router.replace("/nurse/dashboard");
         return;
@@ -221,6 +223,7 @@ export default function LoginPage() {
         background: "#f0f7f7",
         fontFamily: "Arial, sans-serif",
         padding: 20,
+        boxSizing: "border-box",
       }}
     >
       <section
@@ -231,6 +234,7 @@ export default function LoginPage() {
           width: "100%",
           maxWidth: 460,
           boxShadow: "0 8px 25px #0001",
+          boxSizing: "border-box",
         }}
       >
         <h1 style={{ color: "#075c59" }}>
@@ -242,7 +246,7 @@ export default function LoginPage() {
         </h2>
 
         <p style={{ color: "#64748b" }}>
-          Nurse / Clinical Staff / Administrator Access
+          Healthcare Worker / Administrator Access
         </p>
 
         <form
@@ -369,6 +373,67 @@ export default function LoginPage() {
             Resend Verification Email
           </button>
         </div>
+
+        {/* Healthcare Worker Registration */}
+        <div
+          style={{
+            marginTop: 28,
+            paddingTop: 22,
+            borderTop: "1px solid #e2e8f0",
+            textAlign: "center",
+          }}
+        >
+          <p
+            style={{
+              color: "#475569",
+              fontSize: 14,
+              marginBottom: 14,
+            }}
+          >
+            New to DoseTrack Family Planning?
+          </p>
+
+          <Link
+            href="/register-nurse"
+            style={{
+              display: "block",
+              padding: 14,
+              borderRadius: 9,
+              border: "2px solid #0f766e",
+              color: "#0f766e",
+              background: "#ffffff",
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: 15,
+            }}
+          >
+            Register as Healthcare Worker
+          </Link>
+
+          <p
+            style={{
+              color: "#64748b",
+              fontSize: 12,
+              lineHeight: 1.6,
+              marginTop: 12,
+            }}
+          >
+            Registration is subject to administrator
+            approval and facility assignment.
+          </p>
+        </div>
+
+        <footer
+          style={{
+            marginTop: 24,
+            textAlign: "center",
+            color: "#94a3b8",
+            fontSize: 12,
+          }}
+        >
+          © {new Date().getFullYear()} DoseTrack
+          <div>Powered by Videomed</div>
+        </footer>
       </section>
     </main>
   );
