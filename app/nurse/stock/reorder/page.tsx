@@ -130,6 +130,7 @@ export default function MedicationOrdersPage() {
   const [search, setSearch] = useState("");
   const [expandedOrder, setExpandedOrder] =
     useState<string | null>(null);
+  const [reportOrderId, setReportOrderId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -266,6 +267,8 @@ export default function MedicationOrdersPage() {
   }, []);
 
   useEffect(() => {
+    const requestedSite = new URLSearchParams(window.location.search).get("site_id");
+    if (requestedSite) setSelectedFacility(requestedSite);
     void loadOrders();
   }, [loadOrders]);
 
@@ -413,6 +416,11 @@ export default function MedicationOrdersPage() {
     };
   }, [orders, items]);
 
+  const reportOrder = orders.find(order => order.id === reportOrderId) || null;
+  const reportItems = reportOrder ? (itemsByOrder.get(reportOrder.id) || []) : [];
+  const reportRequested = reportItems.reduce((sum, item) => sum + Number(item.quantity_requested || 0), 0);
+  const reportReceived = reportItems.reduce((sum, item) => sum + Number(item.quantity_received || 0), 0);
+
   function refreshOrders() {
     setRefreshing(true);
     void loadOrders();
@@ -517,7 +525,7 @@ export default function MedicationOrdersPage() {
             </button>
 
             <Link
-              href="/nurse/stock/reorder"
+              href={`/nurse/stock/reorder/new${selectedFacility !== "all" ? `?site_id=${encodeURIComponent(selectedFacility)}` : ""}`}
               className="dt-orders-button primary"
             >
               + New Medication Order
@@ -666,7 +674,7 @@ export default function MedicationOrdersPage() {
                   </p>
 
                   <Link
-                    href="/nurse/stock/reorder"
+                    href={`/nurse/stock/reorder/new${selectedFacility !== "all" ? `?site_id=${encodeURIComponent(selectedFacility)}` : ""}`}
                     className="dt-orders-button primary"
                   >
                     Create Medication Order
@@ -817,6 +825,14 @@ export default function MedicationOrdersPage() {
 
                           <button
                             type="button"
+                            className="dt-orders-button primary"
+                            onClick={() => setReportOrderId(order.id)}
+                          >
+                            View Order Report
+                          </button>
+
+                          <button
+                            type="button"
                             className="dt-orders-button secondary"
                             onClick={() =>
                               exportOrder(order)
@@ -949,6 +965,83 @@ export default function MedicationOrdersPage() {
           </>
         )}
       </div>
+
+      {reportOrder && (
+        <div className="dt-report-overlay" role="dialog" aria-modal="true" aria-label="Medication order report">
+          <div className="dt-report-window">
+            <div className="dt-report-toolbar">
+              <strong>Medication Order Report</strong>
+              <div className="dt-orders-actions">
+                <button type="button" className="dt-orders-button secondary" onClick={() => exportOrder(reportOrder)}>
+                  Download CSV
+                </button>
+                <button type="button" className="dt-orders-button primary" onClick={() => window.print()}>
+                  Print / Save PDF
+                </button>
+                <button type="button" className="dt-orders-button secondary" onClick={() => setReportOrderId(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="dt-report-printable">
+              <div className="dt-report-heading">
+                <div>
+                  <p className="dt-orders-eyebrow">DOSETRACK / VIDEOMED</p>
+                  <h2>Family Planning Medication Depot Order</h2>
+                  <p>Clinic medication requisition report</p>
+                </div>
+                <div className="dt-report-number">
+                  <span>ORDER NUMBER</span>
+                  <strong>{reportOrder.order_number || reportOrder.id}</strong>
+                </div>
+              </div>
+              <div className="dt-report-info">
+                <div><span>Clinic / Pharmacy</span><strong>{facilityMap.get(reportOrder.facility_id) || reportOrder.facility_id}</strong></div>
+                <div><span>Depot</span><strong>{reportOrder.depot_name || "Not recorded"}</strong></div>
+                <div><span>Order Month</span><strong>{reportOrder.order_month || "—"}</strong></div>
+                <div><span>Order Status</span><strong>{STATUS_LABELS[reportOrder.status || "draft"] || reportOrder.status || "Draft"}</strong></div>
+                <div><span>Created</span><strong>{formatDate(reportOrder.created_at)}</strong></div>
+                <div><span>Submitted</span><strong>{formatDate(reportOrder.submitted_at)}</strong></div>
+                <div><span>Submission Reference</span><strong>{reportOrder.submission_reference || "Not recorded"}</strong></div>
+              </div>
+              <div className="dt-report-table-wrap">
+                <table className="dt-report-table">
+                  <thead>
+                    <tr><th>#</th><th>ICN Number</th><th>Medication</th><th>Unit</th><th>Requested</th><th>Received</th><th>Outstanding</th></tr>
+                  </thead>
+                  <tbody>
+                    {reportItems.map((item, index) => {
+                      const product = productMap.get(item.product_id);
+                      const requested = Number(item.quantity_requested || 0);
+                      const received = Number(item.quantity_received || 0);
+                      return (
+                        <tr key={item.id}>
+                          <td>{index + 1}</td>
+                          <td>{product?.icn_number || "—"}</td>
+                          <td>{product?.name || item.product_id}</td>
+                          <td>{product?.unit || "units"}</td>
+                          <td>{requested}</td>
+                          <td>{received}</td>
+                          <td>{Math.max(0, requested - received)}</td>
+                        </tr>
+                      );
+                    })}
+                    {reportItems.length === 0 && <tr><td colSpan={7}>No medication lines recorded for this order.</td></tr>}
+                  </tbody>
+                  <tfoot>
+                    <tr><td colSpan={4}>TOTAL</td><td>{reportRequested}</td><td>{reportReceived}</td><td>{Math.max(0, reportRequested - reportReceived)}</td></tr>
+                  </tfoot>
+                </table>
+              </div>
+              <div className="dt-report-signatures">
+                <div>Prepared by: __________________________<p>Date: __________________</p></div>
+                <div>Authorised by: _________________________<p>Date: __________________</p></div>
+              </div>
+              <p className="dt-report-footnote">Generated from DoseTrack order records. Confirm quantities and authorisation before submission to the depot.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style jsx global>{`
         .dt-orders-page {
@@ -1255,6 +1348,57 @@ export default function MedicationOrdersPage() {
           padding: 14px;
           border-radius: 9px;
           margin-bottom: 18px;
+        }
+
+
+        .dt-report-overlay {
+          position: fixed; inset: 0; z-index: 1000;
+          background: rgba(15, 23, 42, .72);
+          overflow-y: auto; padding: 24px 12px;
+        }
+        .dt-report-window {
+          background: white; border-radius: 12px;
+          max-width: 1050px; margin: auto;
+          box-shadow: 0 20px 60px rgba(0,0,0,.25);
+        }
+        .dt-report-toolbar {
+          display: flex; align-items: center; justify-content: space-between;
+          flex-wrap: wrap; gap: 12px; padding: 18px 24px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        .dt-report-printable { padding: 36px; color: #17333b; }
+        .dt-report-heading { display: flex; justify-content: space-between; gap: 20px; border-bottom: 3px solid #0f766e; padding-bottom: 18px; }
+        .dt-report-heading h2 { font-size: 23px; margin: 8px 0; }
+        .dt-report-heading p { color: #64748b; margin: 4px 0; }
+        .dt-report-number { text-align: right; overflow-wrap: anywhere; }
+        .dt-report-number span, .dt-report-info span { display: block; font-size: 11px; color: #64748b; margin-bottom: 5px; }
+        .dt-report-number strong { font-size: 17px; }
+        .dt-report-info { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; padding: 24px 0; }
+        .dt-report-info strong { font-size: 13px; overflow-wrap: anywhere; }
+        .dt-report-table-wrap { overflow-x: auto; }
+        .dt-report-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .dt-report-table th, .dt-report-table td { border: 1px solid #dce5e8; padding: 10px; text-align: left; }
+        .dt-report-table th { background: #eaf5f3; }
+        .dt-report-table tfoot { background: #f1f5f9; font-weight: bold; }
+        .dt-report-signatures { display: flex; justify-content: space-between; gap: 24px; margin-top: 58px; font-size: 13px; }
+        .dt-report-footnote { margin-top: 40px; font-size: 11px; color: #64748b; }
+        @media(max-width:650px) {
+          .dt-report-printable { padding: 18px; }
+          .dt-report-info { grid-template-columns: repeat(2,minmax(0,1fr)); }
+          .dt-report-heading, .dt-report-signatures { flex-direction: column; }
+          .dt-report-number { text-align: left; }
+        }
+        @media print {
+          @page { size: A4 landscape; margin: 12mm; }
+          body * { visibility: hidden !important; }
+          .dt-report-overlay, .dt-report-overlay *, .dt-report-printable, .dt-report-printable * { visibility: visible !important; }
+          .dt-report-overlay { position: absolute; inset: 0; padding: 0; background: white; overflow: visible; }
+          .dt-report-window { box-shadow: none; max-width: none; }
+          .dt-report-toolbar { display: none !important; }
+          .dt-report-printable { padding: 0; }
+          .dt-report-table-wrap { overflow: visible; }
+          .dt-report-table { font-size: 10px; }
+          .dt-report-table tr { break-inside: avoid; }
         }
 
         @media (max-width: 850px) {
