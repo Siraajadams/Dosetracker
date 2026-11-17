@@ -18,10 +18,11 @@ export default function HomePage() {
 
         <p style={styles.subtitle}>
           A secure digital family planning platform
-          for nurses, clinics and healthcare facilities.
-          Manage patient registration, contraceptive
-          administrations, clinical records and
-          facility-based services.
+          for healthcare workers, clinics and healthcare
+          facilities. Manage patient registration,
+          contraceptive medication administration,
+          clinical records, stock management,
+          depot reorders and Department of Health reporting.
         </p>
 
         {/* Secure Access */}
@@ -37,10 +38,11 @@ export default function HomePage() {
 
             <p style={styles.secureText}>
               Patient records, contraceptive
-              administrations and clinical information
-              are accessible only to authenticated,
-              approved healthcare professionals with
-              authorised facility access.
+              administrations, medication stock
+              and clinical information are accessible
+              only to authenticated, approved healthcare
+              workers with authorised facility access
+              and appropriate clinical permissions.
             </p>
           </div>
         </div>
@@ -51,21 +53,21 @@ export default function HomePage() {
             href="/family-planning/login"
             style={styles.primary}
           >
-            Nurse / Administrator Login
+            Healthcare Worker / Administrator Login
           </Link>
 
           <Link
             href="/register-nurse"
             style={styles.secondary}
           >
-            Register as Nurse
+            Register as Healthcare Worker
           </Link>
         </div>
 
         {/* Clinical Workflow */}
         <div style={styles.workflowNotice}>
           <strong>
-            After approval, nurses can:
+            After approval, healthcare workers can:
           </strong>
 
           <ol style={styles.workflowList}>
@@ -84,16 +86,34 @@ export default function HomePage() {
 
             <li>
               Record contraceptive medication
-              administrations.
+              administrations and quantities issued,
+              within their authorised scope of practice.
             </li>
 
             <li>
-              Review patient clinical histories.
+              Review patient clinical histories
+              and previous contraceptive treatments.
             </li>
 
             <li>
-              Maintain facility-based family
-              planning records.
+              Schedule follow-up appointments
+              and planned medication administration dates.
+            </li>
+
+            <li>
+              Manage medication stock received,
+              dispensed, wasted and transferred.
+            </li>
+
+            <li>
+              Monitor available contraceptive stock
+              and submit medication reorder requests
+              to the depot.
+            </li>
+
+            <li>
+              Access contraceptive usage and stock
+              reports for Department of Health reporting.
             </li>
           </ol>
         </div>
@@ -106,9 +126,17 @@ export default function HomePage() {
 
           <p style={styles.noticeText}>
             Administrators can verify and approve
-            nurse registrations, manage clinic
-            master data and assign nurses to
-            healthcare facilities.
+            healthcare worker registrations,
+            manage clinic master data and assign
+            healthcare workers to healthcare facilities.
+          </p>
+
+          <p style={styles.noticeText}>
+            Administrators can also oversee patient
+            management, medication catalogues,
+            contraceptive usage reports,
+            stock management and depot reorder
+            reporting across authorised facilities.
           </p>
 
           <p style={styles.noticeText}>
@@ -119,12 +147,15 @@ export default function HomePage() {
 
         {/* Restricted Access */}
         <div style={styles.notice}>
-          <strong>Restricted clinical access:</strong>
+          <strong>
+            Restricted clinical access:
+          </strong>
           {" "}
           All patient information, medication
-          administrations and facility records
-          require secure authentication and
-          appropriate access permissions.
+          administrations, stock transactions
+          and facility records require secure
+          authentication and appropriate
+          access permissions.
         </div>
 
         {/* Footer */}
