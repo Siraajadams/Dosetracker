@@ -138,11 +138,52 @@ function dobFromSAID(value: string): string {
   ].join("-");
 }
 
+// Age is derived from DOB rather than stored as a fixed patient value.
+// Reports should call the same calculation with the administration date.
+function ageOnDate(dob: string, referenceDate: Date): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const birth = new Date(year, month - 1, day);
+
+  if (
+    birth.getFullYear() !== year ||
+    birth.getMonth() !== month - 1 ||
+    birth.getDate() !== day ||
+    birth > referenceDate
+  ) return null;
+
+  let age = referenceDate.getFullYear() - year;
+  if (
+    referenceDate.getMonth() + 1 < month ||
+    (referenceDate.getMonth() + 1 === month &&
+      referenceDate.getDate() < day)
+  ) age--;
+
+  return age;
+}
+
+function reportingAgeGroup(age: number | null): string {
+  if (age === null) return "Unknown";
+  if (age < 15) return "Under 15";
+  if (age < 20) return "15–19";
+  if (age < 25) return "20–24";
+  if (age < 35) return "25–34";
+  if (age < 50) return "35–49";
+  return "50+";
+}
+
 export default function NewPatientPage() {
   const router = useRouter();
 
   const [form, setForm] =
     useState<PatientForm>(initialForm);
+
+  const patientAge = ageOnDate(form.date_of_birth, new Date());
+  const patientAgeGroup = reportingAgeGroup(patientAge);
 
   const [sites, setSites] = useState<Site[]>([]);
   const [siteId, setSiteId] = useState("");
@@ -309,11 +350,15 @@ export default function NewPatientPage() {
       return "Date of birth is required.";
     }
 
+    if (patientAge === null) {
+      return "Enter a valid date of birth that is not in the future.";
+    }
+
     if (
-      form.date_of_birth >
-      new Date().toISOString().slice(0, 10)
+      form.document_type === "sa_id" &&
+      form.date_of_birth !== dobFromSAID(form.document_number)
     ) {
-      return "Date of birth cannot be in the future.";
+      return "Date of birth must match the South African ID number.";
     }
 
     if (!form.gender) {
@@ -732,6 +777,32 @@ export default function NewPatientPage() {
               }}
               required
             />
+            <div
+              aria-live="polite"
+              style={{
+                marginTop: 12,
+                padding: 14,
+                background: "#f0fdfa",
+                border: "1px solid #99f6e4",
+                borderRadius: 9,
+                color: "#115e59",
+                lineHeight: 1.6,
+              }}
+            >
+              <strong>Calculated Age: </strong>
+              {patientAge === null
+                ? "Enter a valid date of birth"
+                : `${patientAge} years`}
+              <div style={{ fontSize: 13 }}>
+                <strong>Reporting Age Group: </strong>
+                {patientAgeGroup}
+              </div>
+              <small>
+                Reporting age is recalculated at each medication
+                administration date. Date of birth and gender are
+                saved for reporting; age is not stored as a fixed value.
+              </small>
+            </div>
           </div>
 
           <div style={fieldStyle}>
