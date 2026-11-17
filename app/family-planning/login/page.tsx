@@ -60,6 +60,7 @@ export default function FamilyPlanningLogin() {
         justifyContent: "center",
         padding: 24,
         fontFamily: "Arial,sans-serif",
+        boxSizing: "border-box",
       }}
     >
       <section
@@ -70,6 +71,7 @@ export default function FamilyPlanningLogin() {
           borderRadius: 22,
           padding: 32,
           boxShadow: "0 8px 25px rgba(0,0,0,.10)",
+          boxSizing: "border-box",
         }}
       >
         <h1 style={{ color: "#0f766e", marginBottom: 6 }}>
@@ -81,7 +83,7 @@ export default function FamilyPlanningLogin() {
         </h2>
 
         <p style={{ color: "#64748b" }}>
-          Authorised clinical staff access
+          Healthcare Worker / Administrator Access
         </p>
 
         {/* Login and Registration Tabs */}
@@ -115,15 +117,20 @@ export default function FamilyPlanningLogin() {
           <Link
             href="/register-nurse"
             style={{
-              padding: 13,
+              padding: "11px 8px",
               color: "#475569",
               textAlign: "center",
               textDecoration: "none",
               fontWeight: 600,
+              fontSize: 13,
+              lineHeight: 1.4,
               borderRadius: 9,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            Register Nurse
+            Register Healthcare Worker
           </Link>
         </nav>
 
@@ -266,10 +273,26 @@ export default function FamilyPlanningLogin() {
             lineHeight: 1.6,
           }}
         >
-          New nurses must register and receive
+          New healthcare workers must register and receive
           administrator approval before accessing
           clinical services.
         </p>
+
+        <footer
+          style={{
+            marginTop: 24,
+            paddingTop: 16,
+            borderTop: "1px solid #e2e8f0",
+            textAlign: "center",
+            fontSize: 12,
+            color: "#94a3b8",
+          }}
+        >
+          © {new Date().getFullYear()} DoseTrack
+          <div style={{ marginTop: 4 }}>
+            Powered by Videomed
+          </div>
+        </footer>
       </section>
     </main>
   );
