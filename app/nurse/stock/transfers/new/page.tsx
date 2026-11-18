@@ -279,10 +279,16 @@ export default function NewTransferPage() {
         )}`
       );
     } catch (err) {
+      console.error("Stock transfer request error:", err);
+      const details = err && typeof err === "object" ? err as {
+        message?: string; code?: string; details?: string; hint?: string;
+      } : {};
       setError(
-        err instanceof Error
-          ? err.message
-          : "Transfer request failed."
+        [details.message || (err instanceof Error ? err.message : "Transfer request failed."),
+         details.code ? `Code: ${details.code}` : "",
+         details.details || "",
+         details.hint ? `Hint: ${details.hint}` : ""]
+          .filter(Boolean).join(" | ")
       );
     } finally {
       setSaving(false);
