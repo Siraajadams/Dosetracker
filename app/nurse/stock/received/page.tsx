@@ -186,7 +186,7 @@ export default function ReceivedPage() {
     if (sourceType === "transfer") {
       setError(
         "Clinic transfers require the atomic transfer workflow. " +
-        "Use KES Head Office for ordinary receipts. No stock has been saved."
+        "Use KESS for ordinary receipts. No stock has been saved."
       );
       return;
     }
@@ -217,7 +217,7 @@ export default function ReceivedPage() {
     let savedCount = 0;
     try {
       const reference = [
-        "KES Head Office",
+        "KESS",
         referenceNumber.trim() || "No delivery reference",
         `Received ${receivedDate}`,
         notes.trim(),
@@ -270,7 +270,7 @@ export default function ReceivedPage() {
             </p>
             <h1>Stock Received</h1>
             <p>
-              Receive medications from KES Head Office and update clinic inventory by batch.
+              Receive medications from KESS and update clinic inventory by batch.
             </p>
           </div>
 
@@ -340,7 +340,7 @@ export default function ReceivedPage() {
                     }}
                   >
                     <option value="depot">
-                      KES Head Office
+                      KESS
                     </option>
                     <option value="transfer" disabled>
                       Transfer from Another Clinic (requires transfer workflow)
@@ -387,7 +387,7 @@ export default function ReceivedPage() {
                         e.target.value
                       )
                     }
-                    placeholder="KES delivery note or transfer reference"
+                    placeholder="KESS delivery note or transfer reference"
                   />
                 </label>
 
