@@ -23,15 +23,19 @@ type Patient = {
 type Medication = {
   id: string;
   name: string;
+  icnCode: string | null;
 };
+
+type StockProduct = { id: string; icn_number: string | null; unit: string | null };
+type StockBatch = { id: string; facility_id: string; product_id: string; batch_number: string; expiry_date: string; quantity_on_hand: number };
 
 type MedicationRow = {
   key: string;
   medicationId: string;
   dose: string;
   route: string;
-  batchNumber: string;
-  expiryDate: string;
+  batchId: string;
+  stockQuantity: string;
   injectionSite: string;
   notes: string;
 };
@@ -148,8 +152,8 @@ function createRow(): MedicationRow {
     medicationId: "",
     dose: "",
     route: "",
-    batchNumber: "",
-    expiryDate: "",
+    batchId: "",
+    stockQuantity: "1",
     injectionSite: "",
     notes: "",
   };
@@ -173,6 +177,8 @@ export default function NewMedicationAdministrationPage() {
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [medications, setMedications] = useState<Medication[]>([]);
+  const [stockProducts, setStockProducts] = useState<StockProduct[]>([]);
+  const [stockBatches, setStockBatches] = useState<StockBatch[]>([]);
   const [rows, setRows] = useState<MedicationRow[]>([
     createRow(),
   ]);
@@ -289,6 +295,14 @@ export default function NewMedicationAdministrationPage() {
           );
         }
 
+        const [productsResult, batchesResult] = await Promise.all([
+          supabase.from("fp_stock_products").select("id,icn_number,unit").eq("active", true),
+          supabase.from("fp_stock_batches").select("id,facility_id,product_id,batch_number,expiry_date,quantity_on_hand")
+            .eq("facility_id", person.site_id).gt("quantity_on_hand", 0),
+        ]);
+        if (productsResult.error) throw productsResult.error;
+        if (batchesResult.error) throw batchesResult.error;
+
         const { data: catalogue, error: catalogueError } =
           await supabase
             .from("fp_medication_catalogue")
@@ -299,6 +313,7 @@ export default function NewMedicationAdministrationPage() {
         const items = (catalogue || [])
           .map((item: Record<string, unknown>) => ({
             id: String(item.id || ""),
+            icnCode: item.icn_code ? String(item.icn_code) : null,
             name: String(
               item.medication_name ||
               item.name ||
@@ -312,6 +327,8 @@ export default function NewMedicationAdministrationPage() {
         if (!cancelled) {
           setPatient(person as Patient);
           setMedications(items);
+          setStockProducts((productsResult.data || []) as StockProduct[]);
+          setStockBatches((batchesResult.data || []) as StockBatch[]);
         }
       } catch (err) {
         if (!cancelled) setError(errorMessage(err));
@@ -335,7 +352,9 @@ export default function NewMedicationAdministrationPage() {
     setRows((previous) =>
       previous.map((row) =>
         row.key === key
-          ? { ...row, [field]: value }
+          ? field === "medicationId"
+            ? { ...row, medicationId: value, batchId: "", stockQuantity: "1" }
+            : { ...row, [field]: value }
           : row
       )
     );
@@ -419,6 +438,30 @@ export default function NewMedicationAdministrationPage() {
       return;
     }
 
+    const requested = new Map<string, number>();
+    for (const row of rows) {
+      const medication = medications.find(m => m.id === row.medicationId);
+      const product = stockProducts.find(p => p.icn_number && p.icn_number === medication?.icnCode);
+      const batch = stockBatches.find(b => b.id === row.batchId && b.product_id === product?.id && b.facility_id === patient.site_id);
+      const quantity = Number(row.stockQuantity);
+      if (!batch || !Number.isSafeInteger(quantity) || quantity <= 0) {
+        setError("Select an available stock batch and enter a valid whole-number stock quantity for each medication.");
+        return;
+      }
+      if (batch.expiry_date < administrationDate) {
+        setError(`Batch ${batch.batch_number} was expired on the administration date.`);
+        return;
+      }
+      requested.set(batch.id, (requested.get(batch.id) || 0) + quantity);
+    }
+    for (const [id, quantity] of requested) {
+      const batch = stockBatches.find(b => b.id === id);
+      if (!batch || quantity > batch.quantity_on_hand) {
+        setError(`Insufficient stock for batch ${batch?.batch_number || id}.`);
+        return;
+      }
+    }
+
     setSaving(true);
 
     try {
@@ -440,7 +483,11 @@ export default function NewMedicationAdministrationPage() {
           );
         }
 
+        const batch = stockBatches.find(b => b.id === row.batchId);
+        if (!batch) throw new Error("Stock batch is unavailable.");
         return {
+          stock_batch_id: batch.id,
+          stock_quantity: Number(row.stockQuantity),
           patient_id: patient.id,
           site_id: patient.site_id,
           administered_by: auth.user.id,
@@ -448,8 +495,8 @@ export default function NewMedicationAdministrationPage() {
           medication_name: medication.name,
           dose: row.dose.trim(),
           route: row.route,
-          batch_number: row.batchNumber.trim() || null,
-          expiry_date: row.expiryDate || null,
+          batch_number: batch.batch_number,
+          expiry_date: batch.expiry_date,
           administered_at: `${administrationDate}T12:00:00+02:00`,
           injection_site: row.injectionSite.trim() || null,
           adverse_events: adverseEvents.trim() || null,
@@ -477,13 +524,13 @@ export default function NewMedicationAdministrationPage() {
         };
       });
 
-      // One insert for the entire encounter.
-      // A failed insert will not leave half the rows saved.
-      const { error: insertError } = await supabase
-        .from("medication_administrations")
-        .insert(payload);
-
-      if (insertError) throw insertError;
+      // One server-side transaction must save clinical rows and deduct all batches.
+      // Do NOT fall back to a browser insert: that would leave inventory unchanged.
+      const { error: saveError } = await supabase.rpc(
+        "fp_save_patient_administration_with_stock",
+        { p_administrations: payload }
+      );
+      if (saveError) throw saveError;
 
       setSuccess(
         `${rows.length} medication administration record(s) saved successfully.`
@@ -719,147 +766,41 @@ export default function NewMedicationAdministrationPage() {
                       />
                     </label>
 
-                    <label>
-                      Batch Number
-                      <input
-                        value={row.batchNumber}
-                        onChange={(e) =>
-                          updateRow(
-                            row.key,
-                            "batchNumber",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </label>
-
-                    <label>
-                      Expiry Date
-                      <input
-                        type="date"
-                        value={row.expiryDate}
-                        onChange={(e) =>
-                          updateRow(
-                            row.key,
-                            "expiryDate",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <label>
-                    Medication Notes
-                    <textarea
-                      rows={2}
-                      value={row.notes}
-                      onChange={(e) =>
-                        updateRow(
-                          row.key,
-                          "notes",
-                          e.target.value
-                        )
-                      }
-                      placeholder="Additional medication details"
-                    />
-                  </label>
-                </div>
-              ))}
-            </section>
-
-            <section className="fp-card">
-              <p className="fp-eyebrow">
-                DEPARTMENT OF HEALTH FOLLOW-UP
-              </p>
-              <h2>Next Planned Date</h2>
-
-              <label>
-                Follow-up Required
-                <select
-                  value={followUpRequired ? "yes" : "no"}
-                  onChange={(e) =>
-                    setFollowUpRequired(
-                      e.target.value === "yes"
-                    )
-                  }
-                >
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
-                </select>
-              </label>
-
-              {followUpRequired && (
-                <div className="fp-scheduler">
-                  <div className="fp-grid">
-                    <label>
-                      Follow-up Interval *
-                      <select
-                        value={interval}
-                        onChange={(e) =>
-                          updateInterval(e.target.value)
-                        }
-                      >
-                        <option value="28">28 days</option>
-                        <option value="56">56 days</option>
-                        <option value="84">84 days</option>
-                        <option value="custom">
-                          Custom interval
-                        </option>
-                      </select>
-                    </label>
-
-                    {interval === "custom" && (
-                      <label>
-                        Custom Days
-                        <input
-                          type="number"
-                          min="1"
-                          max="365"
-                          required
-                          value={customDays}
-                          onChange={(e) => {
-                            setCustomDays(e.target.value);
-                            setManualAdjustment(false);
-                          }}
-                        />
-                      </label>
-                    )}
-
-                    <label>
-                      Next Planned Date *
-                      <input
-                        type="date"
-                        required
-                        value={plannedDate}
-                        onChange={(e) => {
-                          setManualDate(e.target.value);
-                          setManualAdjustment(true);
-                        }}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="fp-preview">
-                    <strong>
-                      Calculated date: {forecastDate || "—"}
-                    </strong>
-                    <p>
-                      Selected interval: {days} days
-                    </p>
-                    {manualAdjustment && (
-                      <p>
-                        Nurse-adjusted date: {plannedDate}
-                      </p>
-                    )}
-                  </div>
-
-                  {warning && (
-                    <div className="fp-alert warning">
-                      <strong>Scheduling warning:</strong>{" "}
-                      {warning}. Check clinic availability
-                      and adjust the date if necessary.
-                    </div>
+                     {(() => {
+                       const medication = medications.find(m => m.id === row.medicationId);
+                       const product = stockProducts.find(p => p.icn_number && p.icn_number === medication?.icnCode);
+                       const eligible = stockBatches
+                         .filter(b => b.product_id === product?.id && b.facility_id === patient.site_id && b.quantity_on_hand > 0 && b.expiry_date >= administrationDate)
+                         .sort((a,b) => a.expiry_date.localeCompare(b.expiry_date));
+                       const selected = eligible.find(b => b.id === row.batchId);
+                       return <>
+                         <label>
+                           Available Stock Batch *
+                           <select required value={row.batchId} disabled={!product}
+                             onChange={e => updateRow(row.key, "batchId", e.target.value)}>
+                             <option value="">{!product ? "Select a mapped medication" : eligible.length ? "Select received stock batch" : "No valid stock available"}</option>
+                             {eligible.map(b => <option key={b.id} value={b.id}>
+                               {b.batch_number} | Exp: {b.expiry_date} | Available: {b.quantity_on_hand} {product?.unit || "units"}
+                             </option>)}
+                           </select>
+                         </label>
+                         <label>
+                           Stock Quantity ({product?.unit || "units"}) *
+                           <input required type="number" min="1" step="1" value={row.stockQuantity}
+                             onChange={e => updateRow(row.key, "stockQuantity", e.target.value)} />
+                           <small>Enter quantity in inventory units, not clinical dose units.</small>
+                         </label>
+                         <label>
+                           Batch Number (from Stock Received)
+                           <input readOnly value={selected?.batch_number || ""} />
+                         </label>
+                         <label>
+                           Expiry Date (from Stock Received)
+                           <input readOnly value={selected?.expiry_date || ""} />
+                         </label>
+                       </>;
+                     })()}
+                   </div>
                   )}
 
                   {manualAdjustment && (
