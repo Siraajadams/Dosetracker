@@ -801,6 +801,117 @@ export default function NewMedicationAdministrationPage() {
                        </>;
                      })()}
                    </div>
+                  <label>
+                    Medication Notes
+                    <textarea
+                      rows={2}
+                      value={row.notes}
+                      onChange={(e) =>
+                        updateRow(
+                          row.key,
+                          "notes",
+                          e.target.value
+                        )
+                      }
+                      placeholder="Additional medication details"
+                    />
+                  </label>
+                </div>
+              ))}
+            </section>
+
+            <section className="fp-card">
+              <p className="fp-eyebrow">
+                DEPARTMENT OF HEALTH FOLLOW-UP
+              </p>
+              <h2>Next Planned Date</h2>
+
+              <label>
+                Follow-up Required
+                <select
+                  value={followUpRequired ? "yes" : "no"}
+                  onChange={(e) =>
+                    setFollowUpRequired(
+                      e.target.value === "yes"
+                    )
+                  }
+                >
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+
+              {followUpRequired && (
+                <div className="fp-scheduler">
+                  <div className="fp-grid">
+                    <label>
+                      Follow-up Interval *
+                      <select
+                        value={interval}
+                        onChange={(e) =>
+                          updateInterval(e.target.value)
+                        }
+                      >
+                        <option value="28">28 days</option>
+                        <option value="56">56 days</option>
+                        <option value="84">84 days</option>
+                        <option value="custom">
+                          Custom interval
+                        </option>
+                      </select>
+                    </label>
+
+                    {interval === "custom" && (
+                      <label>
+                        Custom Days
+                        <input
+                          type="number"
+                          min="1"
+                          max="365"
+                          required
+                          value={customDays}
+                          onChange={(e) => {
+                            setCustomDays(e.target.value);
+                            setManualAdjustment(false);
+                          }}
+                        />
+                      </label>
+                    )}
+
+                    <label>
+                      Next Planned Date *
+                      <input
+                        type="date"
+                        required
+                        value={plannedDate}
+                        onChange={(e) => {
+                          setManualDate(e.target.value);
+                          setManualAdjustment(true);
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="fp-preview">
+                    <strong>
+                      Calculated date: {forecastDate || "—"}
+                    </strong>
+                    <p>
+                      Selected interval: {days} days
+                    </p>
+                    {manualAdjustment && (
+                      <p>
+                        Nurse-adjusted date: {plannedDate}
+                      </p>
+                    )}
+                  </div>
+
+                  {warning && (
+                    <div className="fp-alert warning">
+                      <strong>Scheduling warning:</strong>{" "}
+                      {warning}. Check clinic availability
+                      and adjust the date if necessary.
+                    </div>
                   )}
 
                   {manualAdjustment && (
