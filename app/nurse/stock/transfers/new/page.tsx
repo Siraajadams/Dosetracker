@@ -259,7 +259,23 @@ export default function NewTransferPage() {
         );
 
       if (rpcError) {
-        throw rpcError;
+        console.error("TRANSFER RPC ERROR", {
+          code: rpcError.code,
+          message: rpcError.message,
+          details: rpcError.details,
+          hint: rpcError.hint,
+        });
+
+        setError(
+          [
+            `Transfer failed [${rpcError.code || "unknown code"}]: ${rpcError.message}`,
+            rpcError.details ? `Details: ${rpcError.details}` : "",
+            rpcError.hint ? `Hint: ${rpcError.hint}` : "",
+          ]
+            .filter(Boolean)
+            .join(" | ")
+        );
+        return;
       }
 
       if (
