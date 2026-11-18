@@ -258,8 +258,8 @@ export default function NewTransferPage() {
         );
       }
 
-      // Safe diagnostic: contains product IDs and quantities, no credentials.
-      console.info("DoseTrack transfer request items:", payload);
+      // Diagnostic: verify the exact payload shape without logging credentials.
+      console.info("DoseTrack transfer request items:", JSON.stringify(payload));
 
       const { data, error: rpcError } = await supabase.rpc(
         "fp_request_stock_transfer",
@@ -282,7 +282,7 @@ export default function NewTransferPage() {
         const extra =
           rpcError.code === "P0001" &&
           rpcError.message.includes("Invalid medication quantity")
-            ? " Check Network > Payload > p_items: each item must contain quantity (not quantity_requested). If it does, inspect the deployed fp_request_stock_transfer SQL function."
+            ? " The SQL function requires p_items entries with a positive integer `quantity`. Check Network > Payload for the actual deployed request; if it contains quantity, confirm the deployed frontend is current and inspect the database function."
             : "";
 
         throw new Error(
