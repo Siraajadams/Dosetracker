@@ -239,43 +239,62 @@ export default function NewTransferPage() {
         );
       }
 
+      // The RPC reads item.quantity, NOT item.quantity_requested.
       const payload = items.map((item) => ({
         product_id: item.product_id,
         quantity: Number(item.quantity),
       }));
 
-      // Supabase must have this RPC.
-      // The RPC must enforce permissions and
-      // create the request atomically.
-      const { data, error: rpcError } =
-        await supabase.rpc(
-          "fp_request_stock_transfer",
-          {
-            p_source: source,
-            p_destination: destination,
-            p_reason: reason.trim(),
-            p_items: payload,
-          }
+      if (
+        payload.some(
+          (item) =>
+            !item.product_id ||
+            !Number.isSafeInteger(item.quantity) ||
+            item.quantity <= 0
+        )
+      ) {
+        throw new Error(
+          "Every medication must have a valid positive whole-number quantity."
         );
+      }
+
+      // Safe diagnostic: contains product IDs and quantities, no credentials.
+      console.info("DoseTrack transfer request items:", payload);
+
+      const { data, error: rpcError } = await supabase.rpc(
+        "fp_request_stock_transfer",
+        {
+          p_source: source,
+          p_destination: destination,
+          p_reason: reason.trim(),
+          p_items: payload,
+        }
+      );
 
       if (rpcError) {
-        console.error("TRANSFER RPC ERROR", {
+        console.error("DoseTrack transfer RPC error:", {
           code: rpcError.code,
           message: rpcError.message,
           details: rpcError.details,
           hint: rpcError.hint,
         });
 
-        setError(
+        const extra =
+          rpcError.code === "P0001" &&
+          rpcError.message.includes("Invalid medication quantity")
+            ? " Check Network > Payload > p_items: each item must contain quantity (not quantity_requested). If it does, inspect the deployed fp_request_stock_transfer SQL function."
+            : "";
+
+        throw new Error(
           [
-            `Transfer failed [${rpcError.code || "unknown code"}]: ${rpcError.message}`,
+            `Transfer failed [${rpcError.code || "unknown"}]: ${rpcError.message}`,
             rpcError.details ? `Details: ${rpcError.details}` : "",
             rpcError.hint ? `Hint: ${rpcError.hint}` : "",
+            extra,
           ]
             .filter(Boolean)
             .join(" | ")
         );
-        return;
       }
 
       if (
