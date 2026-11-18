@@ -3,7 +3,7 @@ import { supabase } from "@/lib/supabaseClient";
 
 // =====================================================
 // DOSETRACK FAMILY PLANNING
-// SHARED STOCK MANAGEMENT LIBRARY
+// STOCK MANAGEMENT LIBRARY
 // =====================================================
 
 export type StockProduct = {
@@ -53,20 +53,15 @@ function stockError(
 }
 
 // =====================================================
-// AUTHENTICATION AND CLINIC ACCESS
+// AUTHENTICATION AND ASSIGNED CLINICS
 // =====================================================
 
-export async function getAssignedFacilities():
-  Promise<string[]> {
-
+export async function getAssignedFacilities(): Promise<string[]> {
   const { data: auth, error: authError } =
     await supabase.auth.getUser();
 
   if (authError) {
-    throw stockError(
-      "Authentication failed",
-      authError
-    );
+    throw stockError("Authentication failed", authError);
   }
 
   if (!auth.user) {
@@ -144,13 +139,11 @@ export async function getAssignedFacilities():
     );
   }
 
-  return (sites || []).map((site) =>
-    String(site.id)
-  );
+  return (sites || []).map((site) => String(site.id));
 }
 
 // =====================================================
-// ASSIGNED CLINICS
+// GET ASSIGNED CLINIC NAMES
 // =====================================================
 
 export async function getAssignedPharmacies():
@@ -161,8 +154,6 @@ export async function getAssignedPharmacies():
   if (!ids.length) {
     return [];
   }
-
-  // sites uses site_name, not name.
 
   const { data, error } = await supabase
     .from("sites")
@@ -193,9 +184,7 @@ export async function getProducts():
 
   const { data, error } = await supabase
     .from("fp_stock_products")
-    .select(
-      "id,name,unit,icn_number,barcode"
-    )
+    .select("id,name,unit,icn_number,barcode")
     .eq("active", true)
     .order("name");
 
@@ -210,10 +199,8 @@ export async function getProducts():
     id: String(product.id),
     name: String(product.name || ""),
     unit: String(product.unit || ""),
-    icn_number:
-      product.icn_number ?? null,
-    barcode:
-      product.barcode ?? null,
+    icn_number: product.icn_number ?? null,
+    barcode: product.barcode ?? null,
   }));
 }
 
@@ -233,9 +220,7 @@ export async function findProductByBarcode(
 
   const { data, error } = await supabase
     .from("fp_stock_products")
-    .select(
-      "id,name,unit,icn_number,barcode"
-    )
+    .select("id,name,unit,icn_number,barcode")
     .eq("barcode", cleaned)
     .eq("active", true)
     .maybeSingle();
@@ -255,10 +240,8 @@ export async function findProductByBarcode(
     id: String(data.id),
     name: String(data.name || ""),
     unit: String(data.unit || ""),
-    icn_number:
-      data.icn_number ?? null,
-    barcode:
-      data.barcode ?? null,
+    icn_number: data.icn_number ?? null,
+    barcode: data.barcode ?? null,
   };
 }
 
@@ -270,8 +253,7 @@ export async function getBalances(
   facilityId: string
 ): Promise<Map<string, number>> {
 
-  const facilities =
-    await getAssignedFacilities();
+  const facilities = await getAssignedFacilities();
 
   if (!facilities.includes(facilityId)) {
     throw new Error(
@@ -281,9 +263,7 @@ export async function getBalances(
 
   const { data, error } = await supabase
     .from("fp_stock_balances")
-    .select(
-      "product_id,quantity_on_hand"
-    )
+    .select("product_id,quantity_on_hand")
     .eq("facility_id", facilityId);
 
   if (error) {
@@ -303,6 +283,7 @@ export async function getBalances(
 
 // =====================================================
 // STOCK BATCHES
+// FIXED GENERICSTRINGERROR TYPESCRIPT ERROR
 // =====================================================
 
 export async function getStockBatches(
@@ -310,20 +291,16 @@ export async function getStockBatches(
   productId: string
 ): Promise<StockBatch[]> {
 
-  const facilities =
-    await getAssignedFacilities();
+  const facilities = await getAssignedFacilities();
 
   if (!facilities.includes(facilityId)) {
-    throw new Error(
-      "Clinic access denied."
-    );
+    throw new Error("Clinic access denied.");
   }
 
   const { data, error } = await supabase
     .from("fp_stock_batches")
     .select(
-      "id,facility_id,product_id,batch_number," +
-      "expiry_date,quantity_on_hand"
+      "id,facility_id,product_id,batch_number,expiry_date,quantity_on_hand"
     )
     .eq("facility_id", facilityId)
     .eq("product_id", productId)
@@ -339,24 +316,46 @@ export async function getStockBatches(
     );
   }
 
-  return (data || []).map((row) => ({
-    id: String(row.id),
-    facility_id:
-      String(row.facility_id),
-    product_id:
-      String(row.product_id),
-    batch_number:
-      String(row.batch_number),
-    expiry_date:
-      String(row.expiry_date),
-    quantity_on_hand:
-      Number(row.quantity_on_hand),
-  }));
+  // Treat the response as unknown before validating it.
+  // This avoids accessing properties on GenericStringError.
+
+  const rows: unknown = data;
+
+  if (!Array.isArray(rows)) {
+    throw new Error(
+      "Unexpected stock batch response from Supabase."
+    );
+  }
+
+  return rows.map((value: unknown): StockBatch => {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("id" in value) ||
+      !("facility_id" in value) ||
+      !("product_id" in value) ||
+      !("batch_number" in value) ||
+      !("expiry_date" in value) ||
+      !("quantity_on_hand" in value)
+    ) {
+      throw new Error(
+        "Invalid stock batch record returned by Supabase."
+      );
+    }
+
+    return {
+      id: String(value.id),
+      facility_id: String(value.facility_id),
+      product_id: String(value.product_id),
+      batch_number: String(value.batch_number),
+      expiry_date: String(value.expiry_date),
+      quantity_on_hand: Number(value.quantity_on_hand),
+    };
+  });
 }
 
 // =====================================================
 // RECORD STOCK BY BATCH
-// RECEIVED / DISPENSED / WASTED
 // =====================================================
 
 export async function recordStockBatch(
@@ -373,13 +372,10 @@ export async function recordStockBatch(
   } = {}
 ): Promise<string> {
 
-  const facilities =
-    await getAssignedFacilities();
+  const facilities = await getAssignedFacilities();
 
   if (!facilities.includes(facilityId)) {
-    throw new Error(
-      "Clinic access denied."
-    );
+    throw new Error("Clinic access denied.");
   }
 
   if (
@@ -401,18 +397,14 @@ export async function recordStockBatch(
       );
     }
   } else if (!options.batchId) {
-    throw new Error(
-      "Select a stock batch."
-    );
+    throw new Error("Select a stock batch.");
   }
 
   if (
     type === "wasted" &&
     !options.reason?.trim()
   ) {
-    throw new Error(
-      "Wastage reason is required."
-    );
+    throw new Error("Wastage reason is required.");
   }
 
   const { data, error } = await supabase.rpc(
@@ -422,25 +414,20 @@ export async function recordStockBatch(
       p_product_id: productId,
       p_type: type,
       p_quantity: quantity,
-
       p_batch_id:
         type === "received"
           ? null
           : options.batchId ?? null,
-
       p_batch_number:
         type === "received"
           ? options.batchNumber?.trim()
           : null,
-
       p_expiry_date:
         type === "received"
           ? options.expiryDate
           : null,
-
       p_reason:
         options.reason?.trim() || null,
-
       p_reference:
         options.reference?.trim() || null,
     }
@@ -457,8 +444,7 @@ export async function recordStockBatch(
 }
 
 // =====================================================
-// LEGACY STOCK TRANSACTIONS
-// RETAINED FOR EXISTING PAGES
+// LEGACY STOCK TRANSACTION
 // =====================================================
 
 export async function recordStock(
@@ -470,13 +456,10 @@ export async function recordStock(
   reference?: string
 ): Promise<string> {
 
-  const facilities =
-    await getAssignedFacilities();
+  const facilities = await getAssignedFacilities();
 
   if (!facilities.includes(facilityId)) {
-    throw new Error(
-      "Clinic access denied."
-    );
+    throw new Error("Clinic access denied.");
   }
 
   if (
@@ -495,10 +478,8 @@ export async function recordStock(
       p_product_id: productId,
       p_type: type,
       p_quantity: quantity,
-      p_reason:
-        reason?.trim() || null,
-      p_reference:
-        reference?.trim() || null,
+      p_reason: reason?.trim() || null,
+      p_reference: reference?.trim() || null,
     }
   );
 
@@ -522,21 +503,16 @@ export async function createDepotOrder(
   items: DepotOrderItem[]
 ): Promise<string> {
 
-  const facilities =
-    await getAssignedFacilities();
+  const facilities = await getAssignedFacilities();
 
   if (!facilities.includes(facilityId)) {
-    throw new Error(
-      "Clinic access denied."
-    );
+    throw new Error("Clinic access denied.");
   }
 
   if (
     !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)
   ) {
-    throw new Error(
-      "Invalid order month."
-    );
+    throw new Error("Invalid order month.");
   }
 
   if (
@@ -558,8 +534,7 @@ export async function createDepotOrder(
   );
 
   if (
-    new Set(productIds).size !==
-    productIds.length
+    new Set(productIds).size !== productIds.length
   ) {
     throw new Error(
       "Duplicate medications are not allowed in one order."
@@ -572,8 +547,7 @@ export async function createDepotOrder(
       p_facility_id: facilityId,
       p_order_month: `${month}-01`,
       p_items: items,
-      p_depot_name:
-        "Family Planning Depot",
+      p_depot_name: "Family Planning Depot",
     }
   );
 
