@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import { getAssignedPharmacies, getProducts, recordStockBatch } from "@/lib/fpStock";
 
 type Clinic = {
   id: string;
@@ -98,76 +99,23 @@ export default function ReceivedPage() {
           );
         }
 
-        const [
-          assignmentsResult,
-          clinicsResult,
-          medicationsResult,
-        ] = await Promise.all([
-          supabase
-            .from("nurse_site_assignments")
-            .select("site_id")
-            .eq("nurse_id", auth.user.id),
-
-          supabase
-            .from("sites")
-            .select("id,site_name")
-            .eq("is_active", true)
-            .order("site_name"),
-
-          supabase
-            .from("fp_medication_catalogue")
-            .select("*"),
+        const [assignedClinics, stockProducts] = await Promise.all([
+          getAssignedPharmacies(),
+          getProducts(),
         ]);
 
-        if (assignmentsResult.error) {
-          throw assignmentsResult.error;
-        }
-
-        if (clinicsResult.error) {
-          throw clinicsResult.error;
-        }
-
-        if (medicationsResult.error) {
-          throw medicationsResult.error;
-        }
-
-        const assignedIds = new Set(
-          (assignmentsResult.data || []).map(
-            (item) => item.site_id
-          )
-        );
-
-        const assignedClinics = (
-          clinicsResult.data || []
-        ).filter((clinic) =>
-          assignedIds.has(clinic.id)
-        );
-
-        const normalizedMedications = (
-          medicationsResult.data || []
-        )
-          .map((item: Record<string, unknown>) => ({
-            id: String(item.id || ""),
-            name: String(
-              item.medication_name ||
-                item.name ||
-                item.product_name ||
-                ""
-            ),
-          }))
-          .filter((item) => item.id && item.name)
-          .sort((a, b) =>
-            a.name.localeCompare(b.name)
-          );
-
         if (!cancelled) {
-          setClinics(clinicsResult.data || []);
-          setMedications(normalizedMedications);
+          setClinics(assignedClinics.map((clinic) => ({
+            id: clinic.id,
+            site_name: clinic.name,
+          })));
+          setMedications(stockProducts.map((product) => ({
+            id: product.id,
+            name: product.name,
+          })));
 
           if (assignedClinics.length === 1) {
-            setDestinationClinic(
-              assignedClinics[0].id
-            );
+            setDestinationClinic(assignedClinics[0].id);
           }
         }
       } catch (err) {
@@ -227,27 +175,18 @@ export default function ReceivedPage() {
     setError("");
     setSuccess("");
 
-    if (!destinationClinic) {
-      setError("Select the receiving clinic.");
+    if (!destinationClinic || !clinics.some((c) => c.id === destinationClinic)) {
+      setError("Select an assigned receiving clinic.");
       return;
     }
 
-    if (
-      sourceType === "transfer" &&
-      !sourceClinic
-    ) {
+    // A transfer must debit the source and credit the destination
+    // in one server-side database transaction. Do not record it as
+    // an ordinary receipt or stock would be created incorrectly.
+    if (sourceType === "transfer") {
       setError(
-        "Select the clinic transferring the stock."
-      );
-      return;
-    }
-
-    if (
-      sourceType === "transfer" &&
-      sourceClinic === destinationClinic
-    ) {
-      setError(
-        "The source and destination clinics must be different."
+        "Clinic transfers require the atomic transfer workflow. " +
+        "Use KES Head Office for ordinary receipts. No stock has been saved."
       );
       return;
     }
@@ -257,16 +196,17 @@ export default function ReceivedPage() {
       return;
     }
 
-    if (
-      items.some(
-        (item) =>
-          !item.medicationId ||
-          !Number.isInteger(Number(item.quantity)) ||
-          Number(item.quantity) <= 0
-      )
-    ) {
+    if (!items.length || items.some((item) =>
+      !item.medicationId ||
+      !Number.isSafeInteger(Number(item.quantity)) ||
+      Number(item.quantity) <= 0 ||
+      !item.batchNumber.trim() ||
+      !item.expiryDate ||
+      item.expiryDate < receivedDate
+    )) {
       setError(
-        "Select a medication and enter a valid whole-number quantity for every item."
+        "Each medication needs a positive whole-number quantity, " +
+        "batch number and expiry date on or after the receipt date."
       );
       return;
     }
@@ -274,65 +214,47 @@ export default function ReceivedPage() {
     if (saving) return;
     setSaving(true);
 
+    let savedCount = 0;
     try {
-      const { data: auth, error: authError } =
-        await supabase.auth.getUser();
+      const reference = [
+        "KES Head Office",
+        referenceNumber.trim() || "No delivery reference",
+        `Received ${receivedDate}`,
+        notes.trim(),
+      ].filter(Boolean).join(" | ");
 
-      if (authError || !auth.user) {
-        throw new Error(
-          "Your session has expired."
+      // Each RPC must update batch inventory and balances together.
+      // Multiple lines are not one atomic receipt: on a later failure,
+      // earlier lines remain saved. Report this clearly to avoid duplicates.
+      for (const item of items) {
+        await recordStockBatch(
+          destinationClinic,
+          item.medicationId,
+          "received",
+          Number(item.quantity),
+          {
+            batchNumber: item.batchNumber.trim(),
+            expiryDate: item.expiryDate,
+            reference,
+          }
         );
+        savedCount += 1;
       }
 
-      /*
-       * IMPORTANT:
-       *
-       * Do not insert stock records directly
-       * until the existing fpStock database
-       * functions and table structure are verified.
-       *
-       * A clinic transfer must:
-       * 1. Reduce stock at the source clinic.
-       * 2. Increase stock at the destination.
-       * 3. Use one transaction to prevent
-       *    mismatched stock balances.
-       *
-       * Depot receipts increase destination
-       * stock only.
-       */
-
-      const receipt = {
-        destinationClinic,
-        sourceType,
-        sourceClinic:
-          sourceType === "transfer"
-            ? sourceClinic
-            : null,
-        referenceNumber,
-        receivedDate,
-        notes,
-        receivedBy: auth.user.id,
-        items: items.map((item) => ({
-          medicationId: item.medicationId,
-          quantity: Number(item.quantity),
-          batchNumber: item.batchNumber,
-          expiryDate: item.expiryDate,
-        })),
-      };
-
-      // The receipt is validated and prepared.
-      // Connect this to the existing stock
-      // transaction function after schema review.
-      console.info(
-        "Validated stock receipt:",
-        receipt
-      );
-
       setSuccess(
-        "Receipt details validated. Database saving is not yet enabled."
+        `Stock received successfully: ${savedCount} medication line(s) ` +
+        "saved to batch inventory. Check Stock Dispensed and stock balances."
       );
+      setItems([newItem()]);
+      setReferenceNumber("");
+      setNotes("");
     } catch (err) {
-      setError(errorText(err));
+      setError(
+        `${errorText(err)}. ${savedCount} of ${items.length} lines were saved. ` +
+        (savedCount > 0
+          ? "Do not resubmit the whole receipt: verify saved batches first to avoid double counting."
+          : "No lines from this attempt were confirmed saved.")
+      );
     } finally {
       setSaving(false);
     }
@@ -348,8 +270,7 @@ export default function ReceivedPage() {
             </p>
             <h1>Stock Received</h1>
             <p>
-              Receive medications from the medicine
-              depot or another clinic.
+              Receive medications from KES Head Office and update clinic inventory by batch.
             </p>
           </div>
 
@@ -419,10 +340,10 @@ export default function ReceivedPage() {
                     }}
                   >
                     <option value="depot">
-                      Medicine Depot
+                      KES Head Office
                     </option>
-                    <option value="transfer">
-                      Transfer from Another Clinic
+                    <option value="transfer" disabled>
+                      Transfer from Another Clinic (requires transfer workflow)
                     </option>
                   </select>
                 </label>
@@ -466,7 +387,7 @@ export default function ReceivedPage() {
                         e.target.value
                       )
                     }
-                    placeholder="Depot order or transfer reference"
+                    placeholder="KES delivery note or transfer reference"
                   />
                 </label>
 
@@ -574,7 +495,7 @@ export default function ReceivedPage() {
                     </label>
 
                     <label>
-                      Batch Number
+                      Batch Number *
                       <input
                         value={item.batchNumber}
                         onChange={(e) =>
@@ -588,7 +509,7 @@ export default function ReceivedPage() {
                     </label>
 
                     <label>
-                      Expiry Date
+                      Expiry Date *
                       <input
                         type="date"
                         value={item.expiryDate}
@@ -650,7 +571,7 @@ export default function ReceivedPage() {
               >
                 {saving
                   ? "Processing..."
-                  : "Validate Stock Receipt"}
+                  : "Save Stock Received"}
               </button>
             </div>
           </>
