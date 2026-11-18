@@ -268,6 +268,7 @@ export default function NewMedicationOrderPage() {
                 </option>
               ))}
             </select>
+            <span className="print-only">{selectedFacility?.name || "Not selected"}</span>
           </label>
 
           <label style={styles.field}>
@@ -279,6 +280,7 @@ export default function NewMedicationOrderPage() {
               disabled={Boolean(orderId)}
               onChange={(e) => setMonth(e.target.value)}
             />
+            <span className="print-only">{month}</span>
           </label>
         </div>
       </section>
@@ -291,7 +293,7 @@ export default function NewMedicationOrderPage() {
         </p>
 
         <div style={{ overflowX: "auto" }}>
-          <table style={styles.table}>
+          <table className="order-entry-table" style={styles.table}>
             <thead>
               <tr>
                 <th style={styles.th}>Medication</th>
@@ -337,6 +339,7 @@ export default function NewMedicationOrderPage() {
                           </option>
                         ))}
                       </select>
+                      <span className="print-only">{product?.name || "—"}</span>
                     </td>
 
                     <td style={styles.td}>
@@ -372,6 +375,7 @@ export default function NewMedicationOrderPage() {
                           )
                         }
                       />
+                      <span className="print-only">{line.quantity || "—"}</span>
                     </td>
 
                     <td style={styles.td}>
@@ -485,7 +489,11 @@ export default function NewMedicationOrderPage() {
       </section>
 
       <style jsx global>{`
+        .print-only { display: none; }
         @media print {
+          .print-only { display: inline !important; font-weight: 700; color: #17324d; }
+          thead { display: table-header-group; }
+          tr { break-inside: avoid; page-break-inside: avoid; }
           .no-print {
             display: none !important;
           }
@@ -498,6 +506,9 @@ export default function NewMedicationOrderPage() {
           button, select, input {
             display: none !important;
           }
+          /* Hide only the action column of the editable medication table. */
+          .order-entry-table th:last-child,
+          .order-entry-table td:last-child { display: none !important; }
         }
       `}</style>
     </main>
@@ -619,4 +630,3 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 16,
   },
 };
-
