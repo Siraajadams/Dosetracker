@@ -241,9 +241,7 @@ export default function NewTransferPage() {
 
       const payload = items.map((item) => ({
         product_id: item.product_id,
-        quantity_requested: Number(
-          item.quantity
-        ),
+        quantity: Number(item.quantity),
       }));
 
       // Supabase must have this RPC.
