@@ -235,7 +235,7 @@ export default function TransferDetailPage() {
     void performAction(
       "fp_receive_stock_transfer",
       { p_transfer_id: transferId },
-      "Stock received and inventory updated."
+      "Receipt confirmed by the transfer function. Verify stock balances before closing the workflow."
     );
   }
 
@@ -268,6 +268,33 @@ export default function TransferDetailPage() {
     transfer.destination_facility_id
   );
 
+  // Never grant approval/dispatch rights merely because a user can view a transfer.
+  // The corresponding Supabase RPC must independently enforce clinic authorisation.
+  const currentStatus = (transfer.status || "").trim().toLowerCase();
+  const sendingClinic = siteName(transfer.source_facility_id);
+  const receivingClinic = siteName(transfer.destination_facility_id);
+
+  const actionGuidance = (() => {
+    if (currentStatus === "requested") {
+      return canSend
+        ? "Review the requested medications below, then approve the transfer on behalf of the sending clinic."
+        : `Awaiting approval from ${sendingClinic}. Only authorised staff assigned to the sending clinic can approve this request. You are ${canReceive ? "signed in with receiving-clinic access" : "not assigned to the sending clinic"}.`;
+    }
+    if (currentStatus === "approved") {
+      return canSend
+        ? "Select an eligible stock batch for each medication, then dispatch the stock."
+        : `Awaiting dispatch by ${sendingClinic}. Only authorised sending-clinic staff can dispatch stock.`;
+    }
+    if (currentStatus === "dispatched") {
+      return canReceive
+        ? "Check the physical stock, quantities, batch numbers and expiry dates before confirming full receipt."
+        : `Awaiting confirmation of receipt by ${receivingClinic}. Only authorised receiving-clinic staff can confirm receipt.`;
+    }
+    if (currentStatus === "received") return "This transfer has been completed. No further action is required.";
+    if (currentStatus === "rejected" || currentStatus === "cancelled") return "This transfer is closed. No further stock action is available.";
+    return `No action is configured for transfer status: ${transfer.status || "unknown"}. Contact the DoseTrack administrator.`;
+  })();
+
   return (
     <main style={styles.page}>
       <Link href="/nurse/stock/transfers">
@@ -285,7 +312,7 @@ export default function TransferDetailPage() {
           </p>
         </div>
         <span style={styles.status}>
-          {transfer.status.toUpperCase()}
+          {currentStatus.toUpperCase()}
         </span>
       </header>
 
@@ -340,6 +367,9 @@ export default function TransferDetailPage() {
             </thead>
 
             <tbody>
+              {items.length === 0 && (
+                <tr><td colSpan={5} style={styles.td}>No transfer medications were returned. Check transfer item permissions and records.</td></tr>
+              )}
               {items.map((item) => (
                 <tr key={item.id}>
                   <td style={styles.td}>
@@ -413,7 +443,14 @@ export default function TransferDetailPage() {
       <section style={styles.card}>
         <h2>Transfer Actions</h2>
 
-        {transfer.status === "requested" &&
+        <p style={styles.muted} role="status">{actionGuidance}</p>
+        <div style={styles.accessInfo}>
+          <strong>Clinic access:</strong>{" "}
+          Sending clinic: {canSend ? "Authorised" : "Not assigned"} |{" "}
+          Receiving clinic: {canReceive ? "Authorised" : "Not assigned"}
+        </div>
+
+        {currentStatus === "requested" &&
           canSend && (
             <button
               disabled={busy}
@@ -455,12 +492,28 @@ export default function TransferDetailPage() {
             </>
           )}
 
-        {transfer.status === "received" && (
+        {currentStatus === "received" && (
           <p style={styles.success}>
             Transfer completed successfully.
           </p>
         )}
 
+        {(currentStatus === "requested" || currentStatus === "approved") && !canSend && (
+          <p style={styles.muted}>
+            To proceed, an authorised staff member at {sendingClinic} must sign in to DoseTrack
+            and open this transfer. If you should have access to that clinic, ask an administrator
+            to check your clinic assignment. Do not share login credentials.
+          </p>
+        )}
+        {currentStatus === "dispatched" && !canReceive && (
+          <p style={styles.muted}>
+            An authorised staff member at {receivingClinic} must sign in and confirm receipt.
+          </p>
+        )}
+        <button type="button" disabled={busy} style={styles.refreshButton}
+          onClick={() => void loadTransfer()}>
+          Refresh Transfer Status
+        </button>
         {busy && <p>Processing...</p>}
       </section>
     </main>
@@ -518,6 +571,26 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 10,
     border: "1px solid #cbd5e1",
     borderRadius: 8,
+  },
+  accessInfo: {
+    padding: 12,
+    marginBottom: 16,
+    borderRadius: 8,
+    background: "#f1f5f9",
+    color: "#334155",
+    fontSize: 14,
+  },
+  refreshButton: {
+    display: "inline-block",
+    marginTop: 14,
+    marginLeft: 10,
+    padding: "12px 18px",
+    background: "#fff",
+    border: "1px solid #0f766e",
+    borderRadius: 8,
+    color: "#0f766e",
+    fontWeight: 700,
+    cursor: "pointer",
   },
   button: {
     background: "#164c7e",
