@@ -31,7 +31,7 @@ const adminModules: Module[] = [
   {
     title: "Patient Management",
     description: "Review patient records and treatment history across facilities.",
-    href: "/family-planning/patients",
+    href: "/nurse/patients",
     icon: "👥",
     category: "Clinical oversight",
     accent: "#D9F3EC",
