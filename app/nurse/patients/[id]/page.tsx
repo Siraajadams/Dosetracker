@@ -48,6 +48,22 @@ type Membership = {
   active: boolean | null;
 };
 
+type MedicationHistory = {
+  id: string;
+  medication_name: string | null;
+  dose: string | null;
+  route: string | null;
+  batch_number: string | null;
+  expiry_date: string | null;
+  administered_at: string | null;
+  injection_site: string | null;
+  adverse_events: string | null;
+  clinical_notes: string | null;
+  next_dose_date: string | null;
+  administered_by: string | null;
+  service_type: string | null;
+};
+
 const CLINICAL_ROLES = [
   "nurse",
   "healthcare_worker",
@@ -146,6 +162,11 @@ export default function PatientRecordPage() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
+  const [treatmentHistory, setTreatmentHistory] =
+    useState<MedicationHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+
   const [isSuperAdmin, setIsSuperAdmin] =
     useState(false);
 
@@ -157,6 +178,8 @@ export default function PatientRecordPage() {
     setErrorMessage("");
     setPatient(null);
     setSite(null);
+    setTreatmentHistory([]);
+    setHistoryError("");
 
     try {
       // STEP 1: Validate patient identifier
@@ -408,6 +431,40 @@ export default function PatientRecordPage() {
     void loadPatient();
   }, [loadPatient]);
 
+  // Treatment history is loaded only after the patient record has passed
+  // the existing authentication and clinic-access checks above.
+  useEffect(() => {
+    if (!patient?.id) return;
+    let cancelled = false;
+
+    async function loadTreatmentHistory() {
+      setHistoryLoading(true);
+      setHistoryError("");
+      const { data, error } = await supabase
+        .from("medication_administrations")
+        .select(`
+          id, medication_name, dose, route, batch_number,
+          expiry_date, administered_at, injection_site,
+          adverse_events, clinical_notes, next_dose_date,
+          administered_by, service_type
+        `)
+        .eq("patient_id", patient!.id)
+        .order("administered_at", { ascending: false });
+
+      if (cancelled) return;
+      if (error) {
+        setHistoryError(`Unable to load treatment history: ${error.message}`);
+        setTreatmentHistory([]);
+      } else {
+        setTreatmentHistory((data ?? []) as MedicationHistory[]);
+      }
+      setHistoryLoading(false);
+    }
+
+    void loadTreatmentHistory();
+    return () => { cancelled = true; };
+  }, [patient?.id]);
+
   const dashboardPath =
     isClinicalWorker
       ? "/nurse/dashboard"
@@ -648,6 +705,64 @@ export default function PatientRecordPage() {
                   patient.postal_code
                 )}
               />
+            </section>
+
+            {/* PREVIOUS TREATMENT HISTORY */}
+            <section style={card}>
+              <h2>Previous Treatment History</h2>
+              <p style={{ color: "#64748b" }}>
+                Recorded medication administrations for this patient,
+                newest first.
+              </p>
+              {historyLoading ? (
+                <p role="status">Loading treatment history...</p>
+              ) : historyError ? (
+                <p role="alert" style={{ color: "#991b1b" }}>
+                  {historyError}
+                </p>
+              ) : treatmentHistory.length === 0 ? (
+                <p>No previous medication administrations recorded.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 14 }}>
+                  {treatmentHistory.map((entry) => (
+                    <article key={entry.id} style={{
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 10,
+                      padding: 16,
+                      background: "#f8fafc",
+                    }}>
+                      <h3 style={{ marginTop: 0, color: "#0f766e" }}>
+                        {display(entry.medication_name)}
+                      </h3>
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))",
+                        gap: 8,
+                      }}>
+                        <Detail label="Administered on" value={
+                          entry.administered_at
+                            ? new Date(entry.administered_at).toLocaleString("en-ZA")
+                            : "Not recorded"
+                        } />
+                        <Detail label="Dose" value={display(entry.dose)} />
+                        <Detail label="Route" value={display(entry.route)} />
+                        <Detail label="Batch number" value={display(entry.batch_number)} />
+                        <Detail label="Batch expiry" value={formatDate(entry.expiry_date)} />
+                        <Detail label="Injection site" value={display(entry.injection_site)} />
+                        <Detail label="Next planned dose" value={formatDate(entry.next_dose_date)} />
+                        <Detail label="Service type" value={display(entry.service_type)} />
+                        <Detail label="Administered by (user ID)" value={display(entry.administered_by)} />
+                      </div>
+                      {entry.adverse_events && (
+                        <Detail label="Adverse events" value={entry.adverse_events} />
+                      )}
+                      {entry.clinical_notes && (
+                        <Detail label="Clinical notes" value={entry.clinical_notes} />
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
             </section>
 
             {/* CLINICAL SERVICES */}
