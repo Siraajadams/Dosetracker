@@ -259,8 +259,10 @@ export default function NursePatientsPage() {
           margin: "auto",
         }}
       >
+        {/* Correct Nurse Dashboard navigation */}
+
         <Link
-          href="/family-planning/dashboard"
+          href="/nurse/dashboard"
           style={{ color: "#08766e" }}
         >
           ← Clinical Dashboard
@@ -439,6 +441,8 @@ export default function NursePatientsPage() {
                         flexWrap: "wrap",
                       }}
                     >
+                      {/* Existing patient history */}
+
                       <Link
                         href={`/nurse/patients/${encodeURIComponent(
                           p.id
@@ -451,10 +455,12 @@ export default function NursePatientsPage() {
                         Clinical history
                       </Link>
 
+                      {/* Correct medication administration route */}
+
                       <Link
                         href={`/nurse/patients/${encodeURIComponent(
                           p.id
-                        )}/administration`}
+                        )}/administrations/new`}
                         style={{
                           background: "#0e756d",
                           color: "white",
