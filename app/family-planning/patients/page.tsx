@@ -77,42 +77,82 @@ export default function FamilyPlanningPatientsPage() {
 
         setEmail(auth.user.email ?? "");
 
-        const adminResult = await supabase.rpc("dt_is_super_admin");
+        // Clinical role takes precedence over any administrator flag.
+        // A clinical account must never inherit network-wide access.
+        const { data: profile, error: profileError } = await supabase
+          .from("staff_profiles")
+          .select("role,approval_status,is_active")
+          .eq("id", auth.user.id)
+          .maybeSingle();
+        if (profileError) throw profileError;
         if (cancelled) return;
 
-        if (adminResult.error) {
-          setError(adminResult.error.message);
+        const clinicalRole =
+          profile?.role === "nurse" || profile?.role === "healthcare_worker";
+        const approvedClinical =
+          clinicalRole &&
+          profile?.approval_status === "approved" &&
+          profile?.is_active === true &&
+          Boolean(auth.user.email_confirmed_at);
+
+        if (clinicalRole && !approvedClinical) {
+          router.replace("/pending-approval");
           return;
         }
 
-        const admin = adminResult.data === true;
-        setIsSuperAdmin(admin);
-
-        // Super admins can select from clinics visible under their RLS policies.
-        // Nurses can only select clinics explicitly assigned to them.
         let permittedSiteIds: string[] | null = null;
+        let admin = false;
 
-        if (!admin) {
-          const { data: assignments, error: assignmentError } =
-            await supabase
+        if (approvedClinical) {
+          // Use active FP memberships first, matching the clinical workspace.
+          const membershipResult = await supabase
+            .from("fp_memberships")
+            .select("facility_id")
+            .eq("user_id", auth.user.id)
+            .eq("active", true);
+
+          let ids: string[] = [];
+          if (!membershipResult.error) {
+            ids = (membershipResult.data ?? [])
+              .map((row) => row.facility_id as string)
+              .filter(Boolean);
+          }
+
+          // Support existing nurse assignments during migration.
+          if (ids.length === 0) {
+            const { data: assignments, error: assignmentError } = await supabase
               .from("nurse_site_assignments")
               .select("site_id")
               .eq("nurse_id", auth.user.id);
-
-          if (assignmentError) throw assignmentError;
-          permittedSiteIds = Array.from(
-            new Set(
-              (assignments ?? [])
+            if (assignmentError && membershipResult.error) {
+              throw new Error(
+                `Clinic lookup failed: ${membershipResult.error.message}; ${assignmentError.message}`
+              );
+            }
+            if (!assignmentError) {
+              ids = (assignments ?? [])
                 .map((row) => row.site_id as string)
-                .filter(Boolean)
-            )
-          );
+                .filter(Boolean);
+            }
+          }
 
+          permittedSiteIds = Array.from(new Set(ids));
           if (permittedSiteIds.length === 0) {
-            setError("No clinic is assigned to your nurse account.");
+            setError("Your account is approved, but no active clinic is assigned. Please contact the administrator.");
             return;
           }
+        } else {
+          const { data: isAdmin, error: adminError } = await supabase.rpc("dt_is_super_admin");
+          if (adminError) throw adminError;
+          if (isAdmin !== true) {
+            router.replace("/pending-approval");
+            return;
+          }
+          admin = true;
         }
+
+        if (cancelled) return;
+        setIsSuperAdmin(admin);
 
         let clinicQuery = supabase
           .from("sites")
