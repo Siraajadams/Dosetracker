@@ -268,6 +268,26 @@ export default function NewMedicationAdministrationPage() {
           throw new Error("Patient has no assigned clinic.");
         }
 
+        // Require an approved, active clinical account before accessing records.
+        const { data: profile, error: profileError } = await supabase
+          .from("staff_profiles")
+          .select("role, approval_status, is_active")
+          .eq("id", auth.user.id)
+          .maybeSingle();
+
+        if (profileError) throw profileError;
+        if (
+          !auth.user.email_confirmed_at ||
+          !["nurse", "healthcare_worker"].includes(
+            String(profile?.role ?? "").toLowerCase().trim()
+          ) ||
+          profile?.approval_status !== "approved" ||
+          profile?.is_active !== true
+        ) {
+          router.replace("/pending-approval");
+          return;
+        }
+
         const [membership, assignment] = await Promise.all([
           supabase
             .from("fp_memberships")
@@ -285,7 +305,14 @@ export default function NewMedicationAdministrationPage() {
             .limit(1),
         ]);
 
-        // Either active membership or assignment permits access.
+        // Both queries are checked; a failed membership lookup must not
+        // silently be treated as proof of an authorised assignment.
+        if (membership.error) throw membership.error;
+        if (assignment.error && !membership.data?.length) {
+          throw assignment.error;
+        }
+
+        // Either active membership or a valid legacy assignment permits access.
         if (
           !membership.data?.length &&
           !assignment.data?.length
