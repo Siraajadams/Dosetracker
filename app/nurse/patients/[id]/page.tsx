@@ -7,6 +7,8 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -34,6 +36,30 @@ type Site = {
   site_name: string;
 };
 
+type StaffProfile = {
+  role: string | null;
+  approval_status: string | null;
+  is_active: boolean | null;
+};
+
+type Membership = {
+  facility_id: string | null;
+  role: string | null;
+  active: boolean | null;
+};
+
+const CLINICAL_ROLES = [
+  "nurse",
+  "healthcare_worker",
+];
+
+const MEMBERSHIP_ROLES = [
+  "nurse",
+  "healthcare_worker",
+  "doctor",
+  "administrator",
+];
+
 const card: CSSProperties = {
   background: "#fff",
   border: "1px solid #e2e8f0",
@@ -43,6 +69,7 @@ const card: CSSProperties = {
 };
 
 const button: CSSProperties = {
+  display: "inline-block",
   padding: "12px 18px",
   borderRadius: 9,
   border: "none",
@@ -50,6 +77,15 @@ const button: CSSProperties = {
   color: "#fff",
   fontWeight: 600,
   cursor: "pointer",
+  textDecoration: "none",
+  fontSize: 14,
+};
+
+const secondaryButton: CSSProperties = {
+  ...button,
+  background: "#fff",
+  color: "#0f766e",
+  border: "1px solid #0f766e",
 };
 
 function display(value: string | null | undefined) {
@@ -60,6 +96,7 @@ function formatDate(value: string | null) {
   if (!value) return "Not recorded";
 
   const parts = value.split("-");
+
   if (parts.length !== 3) return value;
 
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
@@ -83,7 +120,10 @@ function Detail({
       >
         {label}
       </div>
-      <div style={{ fontWeight: 500 }}>{value}</div>
+
+      <div style={{ fontWeight: 500 }}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -93,15 +133,24 @@ export default function PatientRecordPage() {
   const params = useParams();
 
   const patientId =
-    typeof params.id === "string" ? params.id : "";
+    typeof params.id === "string"
+      ? params.id
+      : "";
 
   const [patient, setPatient] =
     useState<Patient | null>(null);
 
-  const [site, setSite] = useState<Site | null>(null);
+  const [site, setSite] =
+    useState<Site | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+
+  const [isSuperAdmin, setIsSuperAdmin] =
+    useState(false);
+
+  const [isClinicalWorker, setIsClinicalWorker] =
+    useState(false);
 
   const loadPatient = useCallback(async () => {
     setLoading(true);
@@ -110,41 +159,87 @@ export default function PatientRecordPage() {
     setSite(null);
 
     try {
-      if (
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-          patientId
-        )
-      ) {
+      // STEP 1: Validate patient identifier
+
+      const validUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      if (!validUuid.test(patientId)) {
         throw new Error("Invalid patient record.");
       }
 
-      // 1. Verify the signed-in user and their programme role.
-      const { data: auth, error: authError } = await supabase.auth.getUser();
+      // STEP 2: Authenticate current user
+
+      const {
+        data: auth,
+        error: authError,
+      } = await supabase.auth.getUser();
+
       if (authError || !auth.user) {
         router.replace("/family-planning/login");
         return;
       }
 
-      const userId = auth.user.id;
-      const { data: isAdmin, error: adminError } = await supabase.rpc(
-        "dt_is_super_admin"
-      );
-      if (adminError) throw adminError;
-      const superAdmin = isAdmin === true;
+      const user = auth.user;
+      const userId = user.id;
+
+      // STEP 3: Retrieve staff profile
+
+      const {
+        data: profileData,
+        error: profileError,
+      } = await supabase
+        .from("staff_profiles")
+        .select("role, approval_status, is_active")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const profile =
+        profileData as StaffProfile | null;
+
+      const role =
+        profile?.role?.toLowerCase().trim() ?? "";
+
+      const clinicalWorker =
+        CLINICAL_ROLES.includes(role);
+
+      setIsClinicalWorker(clinicalWorker);
+
+      // STEP 4: Verify Super Administrator status
+
+      // Clinical workers remain in the clinical workflow,
+      // even if they also have administrator permissions.
+
+      let superAdmin = false;
+
+      if (!clinicalWorker) {
+        const {
+          data: isAdmin,
+          error: adminError,
+        } = await supabase.rpc("dt_is_super_admin");
+
+        if (adminError) {
+          throw adminError;
+        }
+
+        superAdmin = isAdmin === true;
+      }
+
       setIsSuperAdmin(superAdmin);
 
-      let authorisedClinicIds: string[] = [];
-      if (!superAdmin) {
-        const { data: profile, error: profileError } = await supabase
-          .from("staff_profiles")
-          .select("role,approval_status,is_active")
-          .eq("id", userId)
-          .maybeSingle();
-        if (profileError) throw profileError;
+      // STEP 5: Verify healthcare worker approval
+      // and active clinic assignments
 
+      let authorisedClinicIds: string[] = [];
+
+      if (!superAdmin) {
         if (
-          !auth.user.email_confirmed_at ||
-          profile?.role !== "nurse" ||
+          !clinicalWorker ||
+          !user.email_confirmed_at ||
           profile?.approval_status !== "approved" ||
           profile?.is_active !== true
         ) {
@@ -152,61 +247,153 @@ export default function PatientRecordPage() {
           return;
         }
 
-        // Clinic assignments are managed through fp_memberships.
-        const { data: memberships, error: membershipError } = await supabase
+        const {
+          data: membershipData,
+          error: membershipError,
+        } = await supabase
           .from("fp_memberships")
-          .select("facility_id")
+          .select("facility_id, role, active")
           .eq("user_id", userId)
           .eq("active", true);
-        if (membershipError) throw membershipError;
+
+        if (membershipError) {
+          throw membershipError;
+        }
+
+        const memberships =
+          (membershipData ?? []) as Membership[];
+
         authorisedClinicIds = Array.from(
-          new Set((memberships ?? []).map((m) => m.facility_id).filter(Boolean))
+          new Set(
+            memberships
+              .filter(
+                (membership) =>
+                  membership.active === true &&
+                  MEMBERSHIP_ROLES.includes(
+                    membership.role?.toLowerCase().trim() ?? ""
+                  )
+              )
+              .map((membership) => membership.facility_id)
+              .filter(
+                (id): id is string =>
+                  typeof id === "string" && id.length > 0
+              )
+          )
         );
+
         if (authorisedClinicIds.length === 0) {
-          throw new Error("No active clinic is assigned to your account.");
+          throw new Error(
+            "No active clinic is assigned to your account."
+          );
         }
       }
 
-      // 2. Retrieve the patient. Nurses are restricted to their assigned clinics.
-      // Supabase RLS must independently enforce the same authorisation.
+      // STEP 6: Retrieve patient
+      // Clinical workers can only access assigned clinics.
+      // Supabase RLS must enforce the same restriction.
+
       let patientQuery = supabase
         .from("patients")
         .select(`
-          id, patient_clinic_id, site_id,
-          first_name, surname,
-          id_number, passport_number,
-          date_of_birth, gender,
-          mobile_number, email,
-          address, suburb, city,
-          province, postal_code
+          id,
+          patient_clinic_id,
+          site_id,
+          first_name,
+          surname,
+          id_number,
+          passport_number,
+          date_of_birth,
+          gender,
+          mobile_number,
+          email,
+          address,
+          suburb,
+          city,
+          province,
+          postal_code
         `)
         .eq("id", patientId);
 
       if (!superAdmin) {
-        patientQuery = patientQuery.in("site_id", authorisedClinicIds);
+        patientQuery = patientQuery.in(
+          "site_id",
+          authorisedClinicIds
+        );
       }
 
-      const { data: record, error: patientError } = await patientQuery.maybeSingle();
-      if (patientError) throw patientError;
+      const {
+        data: record,
+        error: patientError,
+      } = await patientQuery.maybeSingle();
+
+      if (patientError) {
+        throw patientError;
+      }
+
       if (!record) {
-        throw new Error("Patient not found or access is not authorised.");
+        throw new Error(
+          "Patient not found or access is not authorised."
+        );
       }
 
-      // 3. Display the clinic name where available.
+      // STEP 7: Retrieve original clinic name
+
       let clinic: Site | null = null;
+
       if (record.site_id) {
-        const { data: clinicData, error: siteError } = await supabase
+        const {
+          data: clinicData,
+          error: siteError,
+        } = await supabase
           .from("sites")
-          .select("id,site_name")
+          .select("id, site_name")
           .eq("id", record.site_id)
           .maybeSingle();
-        if (siteError) throw siteError;
-        clinic = clinicData;
+
+        if (siteError) {
+          console.warn(
+            "Unable to retrieve original clinic name:",
+            siteError.message
+          );
+        }
+
+        if (clinicData) {
+          clinic = clinicData as Site;
+        }
+      }
+
+      // STEP 8: Fall back to Family Planning
+      // facility name if necessary
+
+      if (!clinic && record.site_id) {
+        const {
+          data: facilityData,
+          error: facilityError,
+        } = await supabase
+          .from("fp_facilities")
+          .select("id, name")
+          .eq("id", record.site_id)
+          .maybeSingle();
+
+        if (facilityError) {
+          console.warn(
+            "Unable to retrieve Family Planning clinic:",
+            facilityError.message
+          );
+        }
+
+        if (facilityData) {
+          clinic = {
+            id: facilityData.id,
+            site_name: facilityData.name,
+          };
+        }
       }
 
       setPatient(record as Patient);
       setSite(clinic);
-    } catch (error) {
+
+    } catch (error: unknown) {
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -221,9 +408,29 @@ export default function PatientRecordPage() {
     void loadPatient();
   }, [loadPatient]);
 
+  const dashboardPath =
+    isClinicalWorker
+      ? "/nurse/dashboard"
+      : isSuperAdmin
+        ? "/admin"
+        : "/nurse/dashboard";
+
+  const administrationPath = patient
+    ? `/nurse/patients/${encodeURIComponent(
+        patient.id
+      )}/administration/new`
+    : "";
+
   if (loading) {
     return (
-      <main style={{ padding: 30 }}>
+      <main
+        style={{
+          minHeight: "100vh",
+          padding: 30,
+          background: "#f0f7f7",
+          fontFamily: "Arial, sans-serif",
+        }}
+      >
         Loading patient record...
       </main>
     );
@@ -236,9 +443,15 @@ export default function PatientRecordPage() {
         background: "#f0f7f7",
         padding: "28px 16px",
         fontFamily: "Arial, sans-serif",
+        color: "#173b40",
       }}
     >
-      <div style={{ maxWidth: 960, margin: "0 auto" }}>
+      <div
+        style={{
+          maxWidth: 960,
+          margin: "0 auto",
+        }}
+      >
         <header
           style={{
             display: "flex",
@@ -253,27 +466,47 @@ export default function PatientRecordPage() {
             <h1 style={{ color: "#075c59" }}>
               DoseTrack — Patient Record
             </h1>
+
             <p style={{ color: "#64748b" }}>
               Family Planning | Clinical Records
             </p>
           </div>
 
-          <button
-            type="button"
-            style={button}
-            onClick={() =>
-              router.push(isSuperAdmin ? "/admin" : "/family-planning/dashboard")
-            }
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
           >
-            Back to Dashboard
-          </button>
+            <Link
+              href="/nurse/patients"
+              style={secondaryButton}
+            >
+              ← Find Patients
+            </Link>
+
+            <button
+              type="button"
+              style={button}
+              onClick={() =>
+                router.push(dashboardPath)
+              }
+            >
+              Back to Dashboard
+            </button>
+          </div>
         </header>
 
         {errorMessage && (
           <section style={card}>
-            <p role="alert" style={{ color: "#991b1b" }}>
+            <p
+              role="alert"
+              style={{ color: "#991b1b" }}
+            >
               {errorMessage}
             </p>
+
             <button
               type="button"
               style={button}
@@ -286,6 +519,8 @@ export default function PatientRecordPage() {
 
         {patient && (
           <>
+            {/* PATIENT OVERVIEW */}
+
             <section style={card}>
               <h2 style={{ marginTop: 0 }}>
                 Patient Overview
@@ -310,29 +545,40 @@ export default function PatientRecordPage() {
                     patient.patient_clinic_id
                   )}
                 />
+
                 <Detail
                   label="Clinic"
-                  value={display(site?.site_name)}
+                  value={display(
+                    site?.site_name
+                  )}
                 />
+
                 <Detail
                   label="Date of Birth"
                   value={formatDate(
                     patient.date_of_birth
                   )}
                 />
+
                 <Detail
                   label="Gender"
-                  value={display(patient.gender)}
+                  value={display(
+                    patient.gender
+                  )}
                 />
               </div>
             </section>
+
+            {/* IDENTIFICATION */}
 
             <section style={card}>
               <h2>Identification</h2>
 
               <Detail
                 label="South African ID"
-                value={display(patient.id_number)}
+                value={display(
+                  patient.id_number
+                )}
               />
 
               <Detail
@@ -342,6 +588,8 @@ export default function PatientRecordPage() {
                 )}
               />
             </section>
+
+            {/* CONTACT DETAILS */}
 
             <section style={card}>
               <h2>Contact Details</h2>
@@ -355,31 +603,43 @@ export default function PatientRecordPage() {
 
               <Detail
                 label="Email Address"
-                value={display(patient.email)}
+                value={display(
+                  patient.email
+                )}
               />
             </section>
+
+            {/* RESIDENTIAL ADDRESS */}
 
             <section style={card}>
               <h2>Residential Address</h2>
 
               <Detail
                 label="Street Address"
-                value={display(patient.address)}
+                value={display(
+                  patient.address
+                )}
               />
 
               <Detail
                 label="Suburb"
-                value={display(patient.suburb)}
+                value={display(
+                  patient.suburb
+                )}
               />
 
               <Detail
                 label="City / Town"
-                value={display(patient.city)}
+                value={display(
+                  patient.city
+                )}
               />
 
               <Detail
                 label="Province"
-                value={display(patient.province)}
+                value={display(
+                  patient.province
+                )}
               />
 
               <Detail
@@ -390,40 +650,55 @@ export default function PatientRecordPage() {
               />
             </section>
 
+            {/* CLINICAL SERVICES */}
+
             <section style={card}>
               <h2>Clinical Services</h2>
 
               <p style={{ color: "#64748b" }}>
-                Record medication administration,
-                review previous treatments and
-                manage follow-up appointments.
+                Record contraceptive medication
+                administration, review previous
+                treatments and manage follow-up
+                appointments.
               </p>
 
-              <button
-                type="button"
+              <div
                 style={{
-                  ...button,
-                  marginTop: 12,
-                  marginBottom: 12,
-                }}
-                onClick={() => {
-                  router.push(
-                    `/nurse/patients/${patient.id}/administration/new`
-                  );
+                  display: "flex",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginTop: 18,
+                  marginBottom: 14,
                 }}
               >
-                + Record Medication Administration
-              </button>
+                <Link
+                  href={administrationPath}
+                  style={button}
+                >
+                  + Record Medication Administration
+                </Link>
+
+                <Link
+                  href="/nurse/patients"
+                  style={secondaryButton}
+                >
+                  Find Another Patient
+                </Link>
+              </div>
 
               <p
                 style={{
                   fontSize: 13,
                   color: "#64748b",
+                  lineHeight: 1.6,
                 }}
               >
-                Record multiple contraceptive products,
-                including injections, oral contraceptives,
-                implants and condoms, with follow-up dates.
+                Record multiple contraceptive
+                products, including injections,
+                oral contraceptives, implants
+                and condoms, with quantity,
+                route, batch number, expiry
+                date and follow-up scheduling.
               </p>
             </section>
           </>
