@@ -1,19 +1,55 @@
-const { data: profile, error: profileError } = await supabase
+"use client";
+
+import { useState, type CSSProperties, type FormEvent } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+
+type StaffProfile = {
+  role: string | null;
+  approval_status: string | null;
+  is_active: boolean | null;
+};
+
+export default function FamilyPlanningLogin() {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function login(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (loading) return;
+    setLoading(true);
+    setErrorMessage("");
+
+    try {
+      const { data: signIn, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (signInError) throw signInError;
+      const user = signIn.user;
+      if (!user) throw new Error("Unable to verify your account. Please sign in again.");
+
+      const { data: profileData, error: profileError } = await supabase
         .from("staff_profiles")
         .select("role, approval_status, is_active")
         .eq("id", user.id)
         .maybeSingle();
       if (profileError) throw new Error(`Unable to verify staff approval: ${profileError.message}`);
 
-      const clinicalRole = profile?.role === "nurse" || profile?.role === "healthcare_worker" || profile?.role === "doctor";
-      const approvedClinician = clinicalRole &&
-        profile?.approval_status === "approved" &&
-        profile.is_active === true &&
-        Boolean(user.email_confirmed_at);
+      const profile = profileData as StaffProfile | null;
+      const clinicalRole = profile?.role === "nurse" || profile?.role === "healthcare_worker";
 
-      // An approved clinician must have an active clinic assignment.
-      // Check this BEFORE administrator routing so dual-role users reach their clinical workspace.
-      if (approvedClinician) {
+      if (clinicalRole) {
+        if (!user.email_confirmed_at || profile?.approval_status !== "approved" || profile.is_active !== true) {
+          router.replace("/pending-approval");
+          return;
+        }
+
         const { data: memberships, error: membershipError } = await supabase
           .from("fp_memberships")
           .select("facility_id, role, active")
@@ -24,27 +60,18 @@ const { data: profile, error: profileError } = await supabase
         const hasClinicalMembership = (memberships ?? []).some(
           (membership) =>
             Boolean(membership.facility_id) &&
-            ["nurse", "doctor", "administrator", "healthcare_worker"].includes(membership.role)
+            ["nurse", "doctor", "administrator"].includes(membership.role)
         );
         if (hasClinicalMembership) {
           router.replace("/family-planning/dashboard");
           return;
         }
-        // Do not grant clinical access without an assigned clinic.
         setErrorMessage("Your account is approved, but no active clinic is assigned. Please contact the administrator.");
         return;
       }
 
-      // An unapproved or suspended clinical profile must not fall through to admin access.
-      if (clinicalRole) {
-        router.replace("/pending-approval");
-        return;
-      }
-
-      const { data: isSuperAdmin, error: adminError } =
-        await supabase.rpc("dt_is_super_admin");
+      const { data: isSuperAdmin, error: adminError } = await supabase.rpc("dt_is_super_admin");
       if (adminError) throw new Error(`Unable to verify administrator access: ${adminError.message}`);
-
       if (isSuperAdmin === true) {
         router.replace("/admin");
         return;
@@ -59,8 +86,12 @@ const { data: profile, error: profileError } = await supabase
   }
 
   const inputStyle: CSSProperties = {
-    width: "100%", padding: 14, border: "1px solid #cbd5e1", borderRadius: 10,
-    fontSize: 15, boxSizing: "border-box",
+    width: "100%",
+    padding: 14,
+    border: "1px solid #cbd5e1",
+    borderRadius: 10,
+    fontSize: 15,
+    boxSizing: "border-box",
   };
 
   return (
@@ -69,10 +100,12 @@ const { data: profile, error: profileError } = await supabase
         <h1 style={{ color: "#0f766e", marginBottom: 6 }}>DoseTrack</h1>
         <h2 style={{ marginBottom: 8 }}>Family Planning</h2>
         <p style={{ color: "#64748b" }}>Healthcare Worker / Administrator Access</p>
+
         <nav aria-label="Account access" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, padding: 5, background: "#f1f5f9", borderRadius: 12, marginTop: 26 }}>
           <div aria-current="page" style={{ padding: 13, background: "#fff", color: "#0f766e", borderRadius: 9, textAlign: "center", fontWeight: 700, boxShadow: "0 1px 4px rgba(0,0,0,.08)" }}>Login</div>
           <Link href="/register-nurse" style={{ padding: "11px 8px", color: "#475569", textAlign: "center", textDecoration: "none", fontWeight: 600, fontSize: 13, lineHeight: 1.4, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center" }}>Register Healthcare Worker</Link>
         </nav>
+
         <form onSubmit={login} style={{ display: "grid", gap: 16, marginTop: 24 }}>
           <div>
             <label htmlFor="email" style={{ display: "block", marginBottom: 7, fontWeight: 600 }}>Email address</label>
@@ -91,6 +124,7 @@ const { data: profile, error: profileError } = await supabase
           {errorMessage && <p role="alert" style={{ color: "#b91c1c", background: "#fef2f2", padding: 12, borderRadius: 8, fontSize: 14 }}>{errorMessage}</p>}
           <button type="submit" disabled={loading} style={{ padding: 15, background: "#0f766e", color: "white", border: 0, borderRadius: 10, fontWeight: 700, fontSize: 16, cursor: loading ? "wait" : "pointer", opacity: loading ? 0.7 : 1 }}>{loading ? "Signing in..." : "Sign In"}</button>
         </form>
+
         <p style={{ marginTop: 24, fontSize: 13, color: "#64748b", textAlign: "center", lineHeight: 1.6 }}>New healthcare workers must register and receive administrator approval before accessing clinical services.</p>
         <footer style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #e2e8f0", textAlign: "center", fontSize: 12, color: "#94a3b8" }}>
           © {new Date().getFullYear()} DoseTrack
