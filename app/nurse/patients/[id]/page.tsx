@@ -101,6 +101,7 @@ export default function PatientRecordPage() {
   const [site, setSite] = useState<Site | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   const loadPatient = useCallback(async () => {
     setLoading(true);
@@ -117,99 +118,90 @@ export default function PatientRecordPage() {
         throw new Error("Invalid patient record.");
       }
 
-      // 1. Verify authenticated nurse.
-      const { data: auth, error: authError } =
-        await supabase.auth.getUser();
-
+      // 1. Verify the signed-in user and their programme role.
+      const { data: auth, error: authError } = await supabase.auth.getUser();
       if (authError || !auth.user) {
-        router.replace("/login");
+        router.replace("/family-planning/login");
         return;
       }
 
       const userId = auth.user.id;
+      const { data: isAdmin, error: adminError } = await supabase.rpc(
+        "dt_is_super_admin"
+      );
+      if (adminError) throw adminError;
+      const superAdmin = isAdmin === true;
+      setIsSuperAdmin(superAdmin);
 
-      const { data: profile, error: profileError } =
-        await supabase
+      let authorisedClinicIds: string[] = [];
+      if (!superAdmin) {
+        const { data: profile, error: profileError } = await supabase
           .from("staff_profiles")
           .select("role,approval_status,is_active")
           .eq("id", userId)
           .maybeSingle();
+        if (profileError) throw profileError;
 
-      if (profileError) throw profileError;
+        if (
+          !auth.user.email_confirmed_at ||
+          profile?.role !== "nurse" ||
+          profile?.approval_status !== "approved" ||
+          profile?.is_active !== true
+        ) {
+          router.replace("/pending-approval");
+          return;
+        }
 
-      if (
-        !auth.user.email_confirmed_at ||
-        profile?.role !== "nurse" ||
-        profile.approval_status !== "approved" ||
-        profile.is_active !== true
-      ) {
-        router.replace("/pending-approval");
-        return;
-      }
-
-      // 2. Load assigned clinic IDs.
-      const { data: assignments, error: assignmentError } =
-        await supabase
-          .from("nurse_site_assignments")
-          .select("site_id")
-          .eq("nurse_id", userId);
-
-      if (assignmentError) throw assignmentError;
-
-      const siteIds = [
-        ...new Set(
-          (assignments || []).map((item) => item.site_id)
-        ),
-      ].filter(Boolean);
-
-      if (siteIds.length === 0) {
-        throw new Error(
-          "No authorised clinic is assigned to your account."
+        // Clinic assignments are managed through fp_memberships.
+        const { data: memberships, error: membershipError } = await supabase
+          .from("fp_memberships")
+          .select("facility_id")
+          .eq("user_id", userId)
+          .eq("active", true);
+        if (membershipError) throw membershipError;
+        authorisedClinicIds = Array.from(
+          new Set((memberships ?? []).map((m) => m.facility_id).filter(Boolean))
         );
+        if (authorisedClinicIds.length === 0) {
+          throw new Error("No active clinic is assigned to your account.");
+        }
       }
 
-      // 3. Load patient only when assigned to its clinic.
-      const { data: record, error: patientError } =
-        await supabase
-          .from("patients")
-          .select(`
-            id, patient_clinic_id, site_id,
-            first_name, surname,
-            id_number, passport_number,
-            date_of_birth, gender,
-            mobile_number, email,
-            address, suburb, city,
-            province, postal_code
-          `)
-          .eq("id", patientId)
-          .in("site_id", siteIds)
-          .maybeSingle();
+      // 2. Retrieve the patient. Nurses are restricted to their assigned clinics.
+      // Supabase RLS must independently enforce the same authorisation.
+      let patientQuery = supabase
+        .from("patients")
+        .select(`
+          id, patient_clinic_id, site_id,
+          first_name, surname,
+          id_number, passport_number,
+          date_of_birth, gender,
+          mobile_number, email,
+          address, suburb, city,
+          province, postal_code
+        `)
+        .eq("id", patientId);
 
-      if (patientError) {
-        throw new Error(patientError.message);
+      if (!superAdmin) {
+        patientQuery = patientQuery.in("site_id", authorisedClinicIds);
       }
 
-      if (!record?.site_id) {
-        throw new Error(
-          "Patient not found or access is not authorised."
-        );
+      const { data: record, error: patientError } = await patientQuery.maybeSingle();
+      if (patientError) throw patientError;
+      if (!record) {
+        throw new Error("Patient not found or access is not authorised.");
       }
 
-      // 4. Confirm that the clinic is active.
-      const { data: clinic, error: siteError } =
-        await supabase
+      // 3. Display the clinic name where available.
+      let clinic: Site | null = null;
+      if (record.site_id) {
+        const { data: clinicData, error: siteError } = await supabase
           .from("sites")
           .select("id,site_name")
           .eq("id", record.site_id)
-          .eq("is_active", true)
           .maybeSingle();
-
-      if (siteError) throw siteError;
-
-      if (!clinic) {
-        throw new Error(
-          "The patient's clinic is unavailable or inactive."
-        );
+        if (siteError) throw siteError;
+        clinic = clinicData;
       }
 
       setPatient(record as Patient);
@@ -270,7 +262,7 @@ export default function PatientRecordPage() {
             type="button"
             style={button}
             onClick={() =>
-              router.push("/nurse/dashboard")
+              router.push(isSuperAdmin ? "/admin" : "/family-planning/dashboard")
             }
           >
             Back to Dashboard
