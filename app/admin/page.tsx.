@@ -1,8 +1,0 @@
-export default function AdminPage() {
-  return (
-    <main style={{ padding: 40 }}>
-      <h1>DoseTrack Admin Route Test</h1>
-      <p>The /admin route is working.</p>
-    </main>
-  );
-}
