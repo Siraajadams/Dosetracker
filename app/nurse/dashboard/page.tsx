@@ -26,6 +26,11 @@ type Patient = {
 
 type DocumentType = "sa_id" | "passport";
 
+const CLINICAL_ROLES = ["nurse", "healthcare_worker"];
+const CLINIC_MEMBERSHIP_ROLES = ["nurse", "healthcare_worker", "doctor", "administrator"];
+const normaliseRole = (role: string | null | undefined) =>
+  (role ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+
 const cardStyle: CSSProperties = {
   background: "#ffffff",
   border: "1px solid #e2e8f0",
@@ -97,7 +102,7 @@ export default function NurseDashboardPage() {
         await supabase.auth.getUser();
 
       if (authError || !auth.user) {
-        router.replace("/login");
+        router.replace("/family-planning/login");
         return;
       }
 
@@ -123,28 +128,35 @@ export default function NurseDashboardPage() {
         return;
       }
 
-      if (profile.role !== "nurse") {
-        throw new Error(
-          "This dashboard is for approved nurses only."
-        );
+      if (!CLINICAL_ROLES.includes(normaliseRole(profile.role))) {
+        throw new Error("This dashboard is for approved healthcare workers only.");
       }
 
       setNurseId(userId);
 
-      // 3. Retrieve clinic assignments.
-      const { data: assignments, error: assignmentError } =
-        await supabase
+      // 3. Retrieve active clinic assignments from both supported systems.
+      const [legacyAssignments, memberships] = await Promise.all([
+        supabase
           .from("nurse_site_assignments")
           .select("site_id")
-          .eq("nurse_id", userId);
+          .eq("nurse_id", userId),
+        supabase
+          .from("fp_memberships")
+          .select("facility_id,role,active")
+          .eq("user_id", userId)
+          .eq("active", true),
+      ]);
 
-      if (assignmentError) throw assignmentError;
+      if (legacyAssignments.error) throw legacyAssignments.error;
+      if (memberships.error) throw memberships.error;
 
-      const assignedIds = [
-        ...new Set(
-          (assignments || []).map(row => row.site_id)
-        ),
-      ];
+      const assignedIds = Array.from(new Set([
+        ...(legacyAssignments.data ?? []).map(row => row.site_id),
+        ...(memberships.data ?? [])
+          .filter(row => row.active === true &&
+            CLINIC_MEMBERSHIP_ROLES.includes(normaliseRole(row.role)))
+          .map(row => row.facility_id),
+      ].filter((id): id is string => typeof id === "string" && id.length > 0)));
 
       if (assignedIds.length === 0) {
         setSites([]);
@@ -215,7 +227,7 @@ export default function NurseDashboardPage() {
       await supabase.auth.getUser();
 
     if (authError || auth.user?.id !== nurseId) {
-      router.replace("/login");
+      router.replace("/family-planning/login");
       return false;
     }
 
@@ -228,7 +240,7 @@ export default function NurseDashboardPage() {
 
     if (
       profileError ||
-      profile?.role !== "nurse" ||
+      !CLINICAL_ROLES.includes(normaliseRole(profile?.role)) ||
       profile.approval_status !== "approved" ||
       profile.is_active !== true
     ) {
@@ -236,18 +248,30 @@ export default function NurseDashboardPage() {
       return false;
     }
 
-    const { data: assignment, error: assignmentError } =
-      await supabase
+    const [legacyAssignment, membership] = await Promise.all([
+      supabase
         .from("nurse_site_assignments")
         .select("site_id")
         .eq("nurse_id", nurseId)
         .eq("site_id", siteId)
-        .maybeSingle();
+        .maybeSingle(),
+      supabase
+        .from("fp_memberships")
+        .select("facility_id,role,active")
+        .eq("user_id", nurseId)
+        .eq("facility_id", siteId)
+        .eq("active", true),
+    ]);
 
-    if (assignmentError || !assignment) {
-      setErrorMessage(
-        "You are not authorised for this clinic."
-      );
+    if (legacyAssignment.error || membership.error) {
+      setErrorMessage("Unable to verify clinic access.");
+      return false;
+    }
+    const hasMembership = (membership.data ?? []).some(row =>
+      row.active === true && CLINIC_MEMBERSHIP_ROLES.includes(normaliseRole(row.role))
+    );
+    if (!legacyAssignment.data && !hasMembership) {
+      setErrorMessage("You are not authorised for this clinic.");
       return false;
     }
 
@@ -374,7 +398,7 @@ export default function NurseDashboardPage() {
       return;
     }
 
-    router.replace("/login");
+    router.replace("/family-planning/login");
   }
 
   const selectedSite = sites.find(
@@ -384,7 +408,7 @@ export default function NurseDashboardPage() {
   if (loading) {
     return (
       <main style={{ padding: 24 }}>
-        Loading DoseTrack nurse dashboard...
+        Loading DoseTrack healthcare worker dashboard...
       </main>
     );
   }
@@ -425,7 +449,7 @@ export default function NurseDashboardPage() {
             </h1>
 
             <p style={{ color: "#64748b" }}>
-              Family Planning | Nurse Dashboard
+              Family Planning | Healthcare Worker Dashboard
             </p>
           </div>
 
