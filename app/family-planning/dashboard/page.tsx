@@ -106,7 +106,7 @@ const nurseModules: Module[] = [
   {
     title: "Contraceptive Administration",
     description: "Find patients and record contraceptive administrations.",
-    href: "/nurse/patients",
+    href: "/family-planning/patients",
     icon: "💉",
     category: "Clinical workspace",
     accent: "#E8E6FF",
