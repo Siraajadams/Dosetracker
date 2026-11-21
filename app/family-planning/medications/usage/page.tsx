@@ -1,6 +1,12 @@
+
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -16,197 +22,1281 @@ type UsageRow = {
   unit: string;
   has_recorded_usage: boolean;
 };
-type GroupBy = "month" | "year" | "province" | "city" | "pharmacy" | "contraceptive";
-type StatusFilter = "all" | "reporting" | "no-activity";
-type Tab = "overview" | "facilities" | "contraceptives" | "details";
-type GroupedRow = { label: string; unit: string; events: number; quantity: number };
-type Facility = { id: string; name: string; province: string; city: string; events: number; products: Set<string> };
-const groupOptions: { value: GroupBy; label: string }[] = [
-  { value: "month", label: "Month" }, { value: "year", label: "Year" },
-  { value: "province", label: "Province" }, { value: "city", label: "City" },
-  { value: "pharmacy", label: "Healthcare Facility" }, { value: "contraceptive", label: "Contraceptive" },
+
+type GroupBy =
+  | "month"
+  | "year"
+  | "province"
+  | "city"
+  | "pharmacy"
+  | "contraceptive";
+
+type StatusFilter =
+  | "all"
+  | "reporting"
+  | "no-activity";
+
+type GroupedRow = {
+  label: string;
+  unit: string;
+  events: number;
+  quantity: number;
+};
+
+const groupOptions: {
+  value: GroupBy;
+  label: string;
+}[] = [
+  { value: "month", label: "Month" },
+  { value: "year", label: "Year" },
+  { value: "province", label: "Province" },
+  { value: "city", label: "City" },
+  { value: "pharmacy", label: "Healthcare Facility" },
+  { value: "contraceptive", label: "Contraceptive" },
 ];
-const unique = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
-const number = (n: number) => n.toLocaleString("en-ZA");
-function normalizeRow(input: Record<string, unknown>): UsageRow {
+
+function unique(values: string[]) {
+  return [...new Set(values.filter(Boolean))].sort(
+    (a, b) => a.localeCompare(b)
+  );
+}
+
+function normalizeRow(
+  input: Record<string, unknown>
+): UsageRow {
   return {
     site_id: String(input.site_id ?? ""),
-    pharmacy: String(input.pharmacy ?? "Unnamed Healthcare Facility"),
-    province: String(input.province ?? "Unassigned"),
+    pharmacy: String(
+      input.pharmacy ?? "Unnamed Healthcare Facility"
+    ),
+    province: String(
+      input.province ?? "Unassigned"
+    ),
     city: String(input.city ?? "Unassigned"),
-    period_month: input.period_month ? String(input.period_month).slice(0, 7) : null,
-    contraceptive: input.contraceptive ? String(input.contraceptive) : null,
-    administration_events: Number(input.administration_events) || 0,
-    quantity_used: Number(input.quantity_used) || 0,
-    unit: String(input.unit ?? "administration events"),
-    has_recorded_usage: input.has_recorded_usage === true,
+    period_month: input.period_month
+      ? String(input.period_month)
+      : null,
+    contraceptive: input.contraceptive
+      ? String(input.contraceptive)
+      : null,
+    administration_events:
+      Number(input.administration_events) || 0,
+    quantity_used:
+      Number(input.quantity_used) || 0,
+    unit: String(
+      input.unit ?? "administration events"
+    ),
+    has_recorded_usage:
+      input.has_recorded_usage === true,
   };
 }
+
 function csvCell(value: unknown) {
   const raw = String(value ?? "");
-  const safe = /^[=+\-@\t\r]/.test(raw) ? "'" + raw : raw;
+  const safe = /^[=+\-@\t\r]/.test(raw)
+    ? "'" + raw
+    : raw;
+
   return `"${safe.replace(/"/g, '""')}"`;
 }
-function downloadCSV(filename: string, headers: string[], data: unknown[][]) {
-  const lines = [headers.map(csvCell).join(","), ...data.map((r) => r.map(csvCell).join(","))];
-  const blob = new Blob(["\uFEFF", lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+
+function downloadCSV(
+  filename: string,
+  headers: string[],
+  data: unknown[][]
+) {
+  const lines = [
+    headers.map(csvCell).join(","),
+    ...data.map((row) =>
+      row.map(csvCell).join(",")
+    ),
+  ];
+
+  const blob = new Blob(
+    [lines.join("\r\n")],
+    { type: "text/csv;charset=utf-8;" }
+  );
+
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = url; anchor.download = filename;
-  document.body.appendChild(anchor); anchor.click(); anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  window.setTimeout(
+    () => URL.revokeObjectURL(url),
+    1000
+  );
 }
-function ChartBars({ data, empty }: { data: { label: string; value: number }[]; empty?: string }) {
-  const max = Math.max(1, ...data.map((d) => d.value));
-  if (!data.length) return <div className="empty">{empty ?? "No recorded administrations for these filters."}</div>;
-  return <div className="bar-list">{data.map((d) => <div className="bar-row" key={d.label}>
-    <span className="bar-label" title={d.label}>{d.label}</span>
-    <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.max(d.value > 0 ? 1 : 0, (d.value / max) * 100)}%` }} /></div>
-    <strong className="bar-number">{number(d.value)}</strong>
-  </div>)}</div>;
-}
+
 export default function ContraceptiveUsagePage() {
   const [rows, setRows] = useState<UsageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [lastUpdated, setLastUpdated] = useState("");
+  const [lastUpdated, setLastUpdated] =
+    useState("");
+
   const [year, setYear] = useState("");
   const [province, setProvince] = useState("");
   const [city, setCity] = useState("");
   const [pharmacy, setPharmacy] = useState("");
   const [medication, setMedication] = useState("");
-  const [groupBy, setGroupBy] = useState<GroupBy>("month");
-  const [status, setStatus] = useState<StatusFilter>("all");
+  const [groupBy, setGroupBy] =
+    useState<GroupBy>("month");
+  const [status, setStatus] =
+    useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<Tab>("overview");
-  const [page, setPage] = useState(1);
-  const pageSize = 20;
+
   const load = useCallback(async () => {
-    setLoading(true); setError("");
+    setLoading(true);
+    setError("");
+
     try {
-      const { data: auth, error: authError } = await supabase.auth.getUser();
-      if (authError) throw new Error(authError.message);
-      if (!auth.user) throw new Error("Please sign in to view this report.");
-      const { data: isAdmin, error: adminError } = await supabase.rpc("dt_is_super_admin");
-      if (adminError) throw new Error(adminError.message);
-      if (isAdmin !== true) throw new Error("Super Administrator access required.");
-      const { data, error: reportError } = await supabase.rpc("fp_facility_contraceptive_analytics");
-      if (reportError) throw new Error(reportError.message);
-      if (!Array.isArray(data)) throw new Error("Unexpected reporting data format.");
-      setRows(data.map((item) => normalizeRow(item as Record<string, unknown>)));
-      setLastUpdated(new Date().toLocaleString("en-ZA"));
+      const { data: auth, error: authError } =
+        await supabase.auth.getUser();
+
+      if (authError) {
+        throw new Error(authError.message);
+      }
+
+      if (!auth.user) {
+        throw new Error(
+          "Please sign in to view this report."
+        );
+      }
+
+      const { data: isAdmin, error: adminError } =
+        await supabase.rpc("dt_is_super_admin");
+
+      if (adminError) {
+        throw new Error(adminError.message);
+      }
+
+      if (isAdmin !== true) {
+        throw new Error(
+          "Super Administrator access required."
+        );
+      }
+
+      const { data, error: reportError } =
+        await supabase.rpc(
+          "fp_facility_contraceptive_analytics"
+        );
+
+      if (reportError) {
+        throw new Error(reportError.message);
+      }
+
+      if (!Array.isArray(data)) {
+        throw new Error(
+          "Unexpected reporting data format."
+        );
+      }
+
+      setRows(
+        data.map((item) =>
+          normalizeRow(
+            item as Record<string, unknown>
+          )
+        )
+      );
+
+      setLastUpdated(
+        new Date().toLocaleString()
+      );
     } catch (err: unknown) {
-      setRows([]); setError(err instanceof Error ? err.message : "Unable to load analytics.");
-    } finally { setLoading(false); }
+      setRows([]);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load analytics."
+      );
+    } finally {
+      setLoading(false);
+    }
   }, []);
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setPage(1); }, [year, province, city, pharmacy, medication, status, search, groupBy, tab]);
-  const years = useMemo(() => unique(rows.map((r) => r.period_month?.slice(0, 4) ?? "")), [rows]);
-  const provinces = useMemo(() => unique(rows.map((r) => r.province)), [rows]);
-  const cities = useMemo(() => unique(rows.filter((r) => !province || r.province === province).map((r) => r.city)), [rows, province]);
-  const pharmacies = useMemo(() => unique(rows.filter((r) => (!province || r.province === province) && (!city || r.city === city)).map((r) => r.pharmacy)), [rows, province, city]);
-  const medications = useMemo(() => unique(rows.map((r) => r.contraceptive ?? "")), [rows]);
-  const locationRows = useMemo(() => rows.filter((r) =>
-    (!province || r.province === province) && (!city || r.city === city) &&
-    (!pharmacy || r.pharmacy === pharmacy) &&
-    (!search || r.pharmacy.toLowerCase().includes(search.trim().toLowerCase()))
-  ), [rows, province, city, pharmacy, search]);
-  const usageRows = useMemo(() => locationRows.filter((r) =>
-    r.administration_events > 0 && (!year || r.period_month?.slice(0, 4) === year) &&
-    (!medication || r.contraceptive === medication)
-  ), [locationRows, year, medication]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const years = useMemo(
+    () =>
+      unique(
+        rows
+          .map((r) =>
+            r.period_month?.slice(0, 4) ?? ""
+          )
+          .filter(Boolean)
+      ),
+    [rows]
+  );
+
+  const provinces = useMemo(
+    () => unique(rows.map((r) => r.province)),
+    [rows]
+  );
+
+  const cities = useMemo(
+    () =>
+      unique(
+        rows
+          .filter(
+            (r) =>
+              !province ||
+              r.province === province
+          )
+          .map((r) => r.city)
+      ),
+    [rows, province]
+  );
+
+  const pharmacies = useMemo(
+    () =>
+      unique(
+        rows
+          .filter(
+            (r) =>
+              (!province ||
+                r.province === province) &&
+              (!city || r.city === city)
+          )
+          .map((r) => r.pharmacy)
+      ),
+    [rows, province, city]
+  );
+
+  const medications = useMemo(
+    () =>
+      unique(
+        rows.map(
+          (r) => r.contraceptive ?? ""
+        )
+      ),
+    [rows]
+  );
+
+  // Facility/location filters apply to all rows.
+  const locationRows = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          (!province ||
+            r.province === province) &&
+          (!city || r.city === city) &&
+          (!pharmacy ||
+            r.pharmacy === pharmacy) &&
+          (!search ||
+            r.pharmacy
+              .toLowerCase()
+              .includes(search.toLowerCase()))
+      ),
+    [
+      rows,
+      province,
+      city,
+      pharmacy,
+      search,
+    ]
+  );
+
+  // Year and medication filters apply to usage.
+  const usageRows = useMemo(
+    () =>
+      locationRows.filter(
+        (r) =>
+          r.administration_events > 0 &&
+          (!year ||
+            r.period_month?.slice(0, 4) ===
+              year) &&
+          (!medication ||
+            r.contraceptive === medication)
+      ),
+    [locationRows, year, medication]
+  );
+
+  // Count facilities once, even when they have
+  // multiple medication/month records.
   const facilityMap = useMemo(() => {
-    const map = new Map<string, Facility>();
-    for (const r of locationRows) {
-      if (!r.site_id) continue;
-      if (!map.has(r.site_id)) map.set(r.site_id, { id: r.site_id, name: r.pharmacy, province: r.province, city: r.city, events: 0, products: new Set() });
+    const map = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        province: string;
+        city: string;
+        events: number;
+        products: Set<string>;
+      }
+    >();
+
+    for (const row of locationRows) {
+      if (!row.site_id) continue;
+
+      if (!map.has(row.site_id)) {
+        map.set(row.site_id, {
+          id: row.site_id,
+          name: row.pharmacy,
+          province: row.province,
+          city: row.city,
+          events: 0,
+          products: new Set<string>(),
+        });
+      }
     }
-    for (const r of usageRows) {
-      const f = map.get(r.site_id);
-      if (!f) continue;
-      f.events += r.administration_events;
-      if (r.contraceptive) f.products.add(r.contraceptive);
+
+    for (const row of usageRows) {
+      const facility = map.get(row.site_id);
+
+      if (!facility) continue;
+
+      facility.events +=
+        row.administration_events;
+
+      if (row.contraceptive) {
+        facility.products.add(
+          row.contraceptive
+        );
+      }
     }
+
     return map;
   }, [locationRows, usageRows]);
-  const allFacilities = useMemo(() => [...facilityMap.values()], [facilityMap]);
-  const facilities = useMemo(() => allFacilities.filter((f) =>
-    status === "all" || (status === "reporting" ? f.events > 0 : f.events === 0)
-  ).sort((a, b) => a.name.localeCompare(b.name)), [allFacilities, status]);
-  const visibleUsageRows = useMemo(() => status === "no-activity" ? [] : usageRows.filter((r) => status !== "reporting" || (facilityMap.get(r.site_id)?.events ?? 0) > 0), [usageRows, status, facilityMap]);
-  const totals = useMemo(() => ({
-    facilities: allFacilities.length,
-    reporting: allFacilities.filter((f) => f.events > 0).length,
-    noActivity: allFacilities.filter((f) => f.events === 0).length,
-    events: usageRows.reduce((s, r) => s + r.administration_events, 0),
-    provinces: unique(usageRows.filter((r) => r.province !== "Unassigned").map((r) => r.province)).length,
-    products: unique(usageRows.map((r) => r.contraceptive ?? "")).length,
-  }), [allFacilities, usageRows]);
+
+  const facilities = useMemo(() => {
+    return [...facilityMap.values()]
+      .filter((f) => {
+        if (status === "reporting") {
+          return f.events > 0;
+        }
+
+        if (status === "no-activity") {
+          return f.events === 0;
+        }
+
+        return true;
+      })
+      .sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+  }, [facilityMap, status]);
+
+  const totals = useMemo(() => {
+    const all = [...facilityMap.values()];
+
+    const reporting = all.filter(
+      (f) => f.events > 0
+    ).length;
+
+    return {
+      facilities: all.length,
+      reporting,
+      noActivity: all.length - reporting,
+      events: usageRows.reduce(
+        (sum, r) =>
+          sum + r.administration_events,
+        0
+      ),
+      provinces: unique(
+        usageRows
+          .filter(
+            (r) =>
+              r.province !== "Unassigned"
+          )
+          .map((r) => r.province)
+      ).length,
+      products: unique(
+        usageRows.map(
+          (r) => r.contraceptive ?? ""
+        )
+      ).length,
+    };
+  }, [facilityMap, usageRows]);
+
   const grouped = useMemo(() => {
     const map = new Map<string, GroupedRow>();
-    for (const r of usageRows) {
-      const label = ({ month: r.period_month, year: r.period_month?.slice(0, 4), province: r.province, city: r.city, pharmacy: r.pharmacy, contraceptive: r.contraceptive }[groupBy]) || "Unspecified";
-      const key = `${label}::${r.unit}`;
-      const g = map.get(key) ?? { label, unit: r.unit, events: 0, quantity: 0 };
-      g.events += r.administration_events; g.quantity += r.quantity_used; map.set(key, g);
+
+    for (const row of usageRows) {
+      let label = "";
+
+      switch (groupBy) {
+        case "month":
+          label = row.period_month ?? "";
+          break;
+        case "year":
+          label =
+            row.period_month?.slice(0, 4) ?? "";
+          break;
+        case "province":
+          label = row.province;
+          break;
+        case "city":
+          label = row.city;
+          break;
+        case "pharmacy":
+          label = row.pharmacy;
+          break;
+        case "contraceptive":
+          label = row.contraceptive ?? "";
+          break;
+      }
+
+      label = label || "Unspecified";
+
+      const key = `${label}::${row.unit}`;
+
+      const item = map.get(key) ?? {
+        label,
+        unit: row.unit,
+        events: 0,
+        quantity: 0,
+      };
+
+      item.events +=
+        row.administration_events;
+      item.quantity += row.quantity_used;
+
+      map.set(key, item);
     }
-    return [...map.values()].sort((a, b) => groupBy === "month" || groupBy === "year" ? a.label.localeCompare(b.label) : b.events - a.events);
+
+    return [...map.values()].sort(
+      (a, b) =>
+        groupBy === "month" ||
+        groupBy === "year"
+          ? a.label.localeCompare(b.label)
+          : b.events - a.events
+    );
   }, [usageRows, groupBy]);
-  const monthChart = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of usageRows) if (r.period_month) map.set(r.period_month, (map.get(r.period_month) ?? 0) + r.administration_events);
-    return [...map].sort(([a], [b]) => a.localeCompare(b)).map(([label, value]) => ({ label, value }));
-  }, [usageRows]);
-  const medicationChart = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of usageRows) if (r.contraceptive) map.set(r.contraceptive, (map.get(r.contraceptive) ?? 0) + r.administration_events);
-    return [...map].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([label, value]) => ({ label, value }));
-  }, [usageRows]);
-  const topFacilities = useMemo(() => [...allFacilities].filter((f) => f.events > 0).sort((a, b) => b.events - a.events).slice(0, 10).map((f) => ({ label: f.name, value: f.events })), [allFacilities]);
-  const exportSummary = () => downloadCSV(`contraceptive-usage-${groupBy}-${year || "all-years"}.csv`, ["Group", "Unit", "Administration Events", "Quantity (Event-Based Proxy)"], grouped.map((r) => [r.label, r.unit, r.events, r.quantity]));
-  const exportFacilities = () => downloadCSV("family-planning-facility-coverage.csv", ["Facility ID", "Healthcare Facility", "Province", "City", "Administration Events", "Contraceptive Products", "Reporting Status"], facilities.map((f) => [f.id, f.name, f.province, f.city, f.events, [...f.products].join("; "), f.events > 0 ? "Reporting" : "No recorded activity"]));
-  const exportDetailed = () => downloadCSV("family-planning-detailed-usage.csv", ["Facility ID", "Healthcare Facility", "Province", "City", "Month", "Contraceptive", "Administration Events", "Quantity (Event-Based Proxy)", "Unit"], visibleUsageRows.map((r) => [r.site_id, r.pharmacy, r.province, r.city, r.period_month, r.contraceptive, r.administration_events, r.quantity_used, r.unit]));
-  const resetFilters = () => { setYear(""); setProvince(""); setCity(""); setPharmacy(""); setMedication(""); setStatus("all"); setSearch(""); setGroupBy("month"); };
-  const pagination = (count: number) => {
-    const pages = Math.max(1, Math.ceil(count / pageSize));
-    return <div className="pagination"><span>{count === 0 ? "0 results" : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, count)} of ${count}`}</span><div><button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button><span>Page {page} of {pages}</span><button disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</button></div></div>;
-  };
-  return <main className="analytics">
-    <div className="shell">
-      <header className="hero"><div><div className="eyebrow">DOSETRACK / FAMILY PLANNING</div><h1>Reporting &amp; Analytics</h1><p>National contraceptive programme monitoring and facility performance</p><span className="updated">{lastUpdated ? `Data refreshed: ${lastUpdated}` : "Live reporting data"}</span></div><div className="header-actions"><Link href="/family-planning/dashboard">← Dashboard</Link><Link href="/admin/medications">Medication Catalogue</Link><button onClick={() => void load()} disabled={loading}>{loading ? "Refreshing…" : "↻ Refresh data"}</button></div></header>
-      {error && <section className="alert" role="alert"><strong>Unable to load analytics</strong><p>{error}</p><button onClick={() => void load()}>Try again</button></section>}
-      <section className="filter-panel"><div className="section-top"><div><h2>Report filters</h2><p>Refine your reporting view across locations, dates and contraceptives.</p></div><button className="text-button" onClick={resetFilters}>Clear filters</button></div>
-        <div className="filter-grid">
-          <label>Year<select value={year} onChange={(e) => setYear(e.target.value)}><option value="">All years</option>{years.map((v) => <option key={v}>{v}</option>)}</select></label>
-          <label>Province<select value={province} onChange={(e) => { setProvince(e.target.value); setCity(""); setPharmacy(""); }}><option value="">All provinces</option>{provinces.map((v) => <option key={v}>{v}</option>)}</select></label>
-          <label>City<select value={city} onChange={(e) => { setCity(e.target.value); setPharmacy(""); }}><option value="">All cities</option>{cities.map((v) => <option key={v}>{v}</option>)}</select></label>
-          <label>Healthcare facility<select value={pharmacy} onChange={(e) => setPharmacy(e.target.value)}><option value="">All facilities</option>{pharmacies.map((v) => <option key={v}>{v}</option>)}</select></label>
-          <label>Contraceptive<select value={medication} onChange={(e) => setMedication(e.target.value)}><option value="">All contraceptives</option>{medications.map((v) => <option key={v}>{v}</option>)}</select></label>
-          <label>Reporting status<select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}><option value="all">All facilities</option><option value="reporting">Reporting facilities</option><option value="no-activity">No recorded activity</option></select></label>
-          <label>Group summary by<select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>{groupOptions.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}</select></label>
-          <label>Find facility<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search pharmacy or clinic" /></label>
+
+  // Consolidate identical contraceptives within each facility and month.
+  // Keep units separate to avoid combining unlike measurements.
+  const allAggregatedUsageRows = useMemo(() => {
+    const map = new Map<string, UsageRow>();
+    for (const row of usageRows) {
+      if (!row.site_id || !row.period_month || !row.contraceptive) continue;
+      if (status === "no-activity") continue;
+      if (status === "reporting" && (facilityMap.get(row.site_id)?.events ?? 0) <= 0) continue;
+
+      const key = JSON.stringify([
+        row.site_id,
+        row.period_month.slice(0, 7),
+        row.contraceptive.trim().toLowerCase(),
+        row.unit || "administration events",
+      ]);
+      const existing = map.get(key);
+      if (existing) {
+        existing.administration_events += Number(row.administration_events) || 0;
+        existing.quantity_used += Number(row.quantity_used) || 0;
+      } else {
+        map.set(key, {
+          ...row,
+          period_month: row.period_month.slice(0, 7),
+          administration_events: Number(row.administration_events) || 0,
+          quantity_used: Number(row.quantity_used) || 0,
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) =>
+      (a.pharmacy || "").localeCompare(b.pharmacy || "") ||
+      (a.period_month || "").localeCompare(b.period_month || "") ||
+      b.administration_events - a.administration_events ||
+      (a.contraceptive || "").localeCompare(b.contraceptive || "")
+    );
+  }, [usageRows, status, facilityMap]);
+
+  // Limit each facility-month to its 10 highest-usage contraceptives.
+  const visibleUsageRows = useMemo(() => {
+    const counts = new Map<string, number>();
+    return allAggregatedUsageRows.filter((row) => {
+      const key = `${row.site_id}::${row.period_month}`;
+      const count = counts.get(key) ?? 0;
+      if (count >= 10) return false;
+      counts.set(key, count + 1);
+      return true;
+    });
+  }, [allAggregatedUsageRows]);
+
+  function exportSummary() {
+    downloadCSV(
+      `contraceptive-usage-${groupBy}-${
+        year || "all-years"
+      }.csv`,
+      [
+        "Group",
+        "Unit",
+        "Administration Events",
+        "Quantity (Event-Based Proxy)",
+      ],
+      grouped.map((r) => [
+        r.label,
+        r.unit,
+        r.events,
+        r.quantity,
+      ])
+    );
+  }
+
+  function exportFacilities() {
+    downloadCSV(
+      "family-planning-facility-coverage.csv",
+      [
+        "Facility ID",
+        "Healthcare Facility",
+        "Province",
+        "City",
+        "Administration Events",
+        "Contraceptive Products",
+        "Reporting Status",
+      ],
+      facilities.map((f) => [
+        f.id,
+        f.name,
+        f.province,
+        f.city,
+        f.events,
+        [...f.products].join("; "),
+        f.events > 0
+          ? "Reporting"
+          : "No recorded activity",
+      ])
+    );
+  }
+
+  function exportDetailed() {
+    downloadCSV(
+      "family-planning-detailed-usage.csv",
+      [
+        "Facility ID",
+        "Healthcare Facility",
+        "Province",
+        "City",
+        "Month",
+        "Contraceptive",
+        "Administration Events",
+        "Quantity (Event-Based Proxy)",
+        "Unit",
+      ],
+      visibleUsageRows.map((r) => [
+        r.site_id,
+        r.pharmacy,
+        r.province,
+        r.city,
+        r.period_month,
+        r.contraceptive,
+        r.administration_events,
+        r.quantity_used,
+        r.unit,
+      ])
+    );
+  }
+
+  function exportFullAggregatedUsage() {
+    downloadCSV(
+      "family-planning-all-monthly-contraceptives.csv",
+      [
+        "Facility ID", "Healthcare Facility", "Province", "City", "Month",
+        "Contraceptive", "Administration Events", "Quantity (Event-Based Proxy)", "Unit",
+      ],
+      allAggregatedUsageRows.map((r) => [
+        r.site_id, r.pharmacy, r.province, r.city, r.period_month,
+        r.contraceptive, r.administration_events, r.quantity_used, r.unit,
+      ])
+    );
+  }
+
+  return (
+    <main className="usage-page">
+      <header className="usage-header">
+        <div>
+          <div className="eyebrow">
+            DOSETRACK / FAMILY PLANNING
+          </div>
+
+          <h1>
+            Contraceptive Usage Analytics
+          </h1>
+
+          <p>
+            National contraceptive utilisation,
+            facility coverage and reporting.
+          </p>
+
+          {lastUpdated && (
+            <p className="updated">
+              Last updated: {lastUpdated}
+            </p>
+          )}
+        </div>
+
+        <div className="actions">
+          <Link href="/admin/medications">
+  Medication Catalogue
+</Link>
+
+          <button
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+
+          <button
+            onClick={exportSummary}
+            disabled={loading || !grouped.length}
+          >
+            Export Summary
+          </button>
+
+          <button
+            onClick={exportDetailed}
+            disabled={
+              loading || !visibleUsageRows.length
+            }
+          >
+            Export Detailed Usage
+          </button>
+
+          <button
+            className="primary"
+            onClick={exportFacilities}
+            disabled={loading || !facilities.length}
+          >
+            Export Facilities
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <section className="error" role="alert">
+          <strong>Unable to load analytics</strong>
+          <p>{error}</p>
+          <button onClick={() => void load()}>
+            Try Again
+          </button>
+        </section>
+      )}
+
+      <section className="filters">
+        <label>
+          Year
+          <select
+            value={year}
+            onChange={(e) =>
+              setYear(e.target.value)
+            }
+          >
+            <option value="">All Years</option>
+            {years.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Province
+          <select
+            value={province}
+            onChange={(e) => {
+              setProvince(e.target.value);
+              setCity("");
+              setPharmacy("");
+            }}
+          >
+            <option value="">
+              All Provinces
+            </option>
+            {provinces.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          City
+          <select
+            value={city}
+            onChange={(e) => {
+              setCity(e.target.value);
+              setPharmacy("");
+            }}
+          >
+            <option value="">All Cities</option>
+            {cities.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Healthcare Facility
+          <select
+            value={pharmacy}
+            onChange={(e) =>
+              setPharmacy(e.target.value)
+            }
+          >
+            <option value="">
+              All Facilities
+            </option>
+            {pharmacies.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Contraceptive
+          <select
+            value={medication}
+            onChange={(e) =>
+              setMedication(e.target.value)
+            }
+          >
+            <option value="">
+              All Contraceptives
+            </option>
+            {medications.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Group Report By
+          <select
+            value={groupBy}
+            onChange={(e) =>
+              setGroupBy(
+                e.target.value as GroupBy
+              )
+            }
+          >
+            {groupOptions.map((option) => (
+              <option
+                key={option.value}
+                value={option.value}
+              >
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Facility Reporting Status
+          <select
+            value={status}
+            onChange={(e) =>
+              setStatus(
+                e.target.value as StatusFilter
+              )
+            }
+          >
+            <option value="all">
+              All Facilities
+            </option>
+            <option value="reporting">
+              Reporting Facilities
+            </option>
+            <option value="no-activity">
+              No Recorded Activity
+            </option>
+          </select>
+        </label>
+
+        <label>
+          Search Facility
+          <input
+            value={search}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
+            placeholder="Search pharmacy or clinic"
+          />
+        </label>
+      </section>
+
+      <section className="stats">
+        <div className="stat">
+          <span>Registered Active Facilities</span>
+          <strong>{totals.facilities}</strong>
+        </div>
+
+        <div className="stat">
+          <span>Reporting Facilities</span>
+          <strong>{totals.reporting}</strong>
+        </div>
+
+        <div className="stat">
+          <span>No Recorded Activity</span>
+          <strong>{totals.noActivity}</strong>
+        </div>
+
+        <div className="stat">
+          <span>Administration Events</span>
+          <strong>
+            {totals.events.toLocaleString()}
+          </strong>
+        </div>
+
+        <div className="stat">
+          <span>Reporting Provinces</span>
+          <strong>{totals.provinces}</strong>
+        </div>
+
+        <div className="stat">
+          <span>Contraceptives Used</span>
+          <strong>{totals.products}</strong>
         </div>
       </section>
-      <section className="kpis" aria-label="Reporting metrics">{[
-        { label: "Registered facilities", value: totals.facilities, note: "Within selected locations" },
-        { label: "Reporting facilities", value: totals.reporting, note: "With recorded administrations" },
-        { label: "No recorded activity", value: totals.noActivity, note: "Within selected period" },
-        { label: "Administration events", value: totals.events, note: "Recorded contraceptive events" },
-        { label: "Reporting provinces", value: totals.provinces, note: "With recorded activity" },
-        { label: "Contraceptives used", value: totals.products, note: "Distinct recorded products" },
-      ].map((k) => <article className="kpi" key={k.label}><span>{k.label}</span><strong>{loading ? "…" : number(k.value)}</strong><small>{k.note}</small></article>)}</section>
-      <nav className="tabs" aria-label="Report sections">{([
-        ["overview", "National overview"], ["facilities", "Facility performance"],
-        ["contraceptives", "Contraceptive usage"], ["details", "Detailed records"],
-      ] as [Tab, string][]).map(([id, label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)} aria-current={tab === id ? "page" : undefined}>{label}</button>)}</nav>
-      {tab === "overview" && <><div className="charts"><section className="panel"><div className="section-top"><div><h2>Monthly administrations</h2><p>Recorded administration events over time</p></div></div><ChartBars data={monthChart} /></section><section className="panel"><div className="section-top"><div><h2>Contraceptive utilisation</h2><p>Top products by administration events</p></div></div><ChartBars data={medicationChart} /></section></div><section className="panel"><div className="section-top"><div><h2>Top reporting facilities</h2><p>Facilities with the most recorded administrations</p></div><button onClick={() => setTab("facilities")}>View all facilities</button></div><ChartBars data={topFacilities} /></section></>}
-      {tab === "facilities" && <section className="panel"><div className="section-top"><div><h2>Facility coverage &amp; performance</h2><p>Registered facilities, including facilities without recorded administrations</p></div><button className="primary" disabled={loading || !facilities.length} onClick={exportFacilities}>↓ Export facilities CSV</button></div><div className="table-scroll"><table><thead><tr><th>Healthcare facility</th><th>Province</th><th>City</th><th className="num">Events</th><th className="num">Products</th><th>Status</th></tr></thead><tbody>{facilities.slice((page - 1) * pageSize, page * pageSize).map((f) => <tr key={f.id}><td className="name">{f.name}</td><td>{f.province}</td><td>{f.city}</td><td className="num">{number(f.events)}</td><td className="num">{f.products.size}</td><td><span className={`status ${f.events > 0 ? "positive" : "neutral"}`}>{f.events > 0 ? "Reporting" : "No recorded activity"}</span></td></tr>)}</tbody></table>{!loading && !facilities.length && <div className="empty">No facilities match the selected filters.</div>}</div>{pagination(facilities.length)}</section>}
-      {tab === "contraceptives" && <section className="panel"><div className="section-top"><div><h2>Usage by {groupOptions.find((g) => g.value === groupBy)?.label}</h2><p>Aggregated administration events and event-based quantities</p></div><button className="primary" disabled={loading || !grouped.length} onClick={exportSummary}>↓ Export summary CSV</button></div><div className="table-scroll"><table><thead><tr><th>Group</th><th>Unit</th><th className="num">Administration events</th><th className="num">Event-based quantity</th></tr></thead><tbody>{grouped.slice((page - 1) * pageSize, page * pageSize).map((r) => <tr key={`${r.label}-${r.unit}`}><td className="name">{r.label}</td><td>{r.unit}</td><td className="num">{number(r.events)}</td><td className="num">{number(r.quantity)}</td></tr>)}</tbody></table>{!loading && !grouped.length && <div className="empty">No contraceptive administrations match the selected filters.</div>}</div>{pagination(grouped.length)}</section>}
-      {tab === "details" && <section className="panel"><div className="section-top"><div><h2>Detailed contraceptive usage</h2><p>Monthly records by facility and contraceptive</p></div><button className="primary" disabled={loading || !visibleUsageRows.length} onClick={exportDetailed}>↓ Export detailed CSV</button></div><div className="table-scroll"><table><thead><tr><th>Month</th><th>Facility</th><th>Province</th><th>City</th><th>Contraceptive</th><th className="num">Events</th><th className="num">Quantity proxy</th></tr></thead><tbody>{visibleUsageRows.slice((page - 1) * pageSize, page * pageSize).map((r, i) => <tr key={`${r.site_id}-${r.period_month}-${r.contraceptive}-${(page - 1) * pageSize + i}`}><td>{r.period_month ?? "—"}</td><td className="name">{r.pharmacy}</td><td>{r.province}</td><td>{r.city}</td><td>{r.contraceptive ?? "—"}</td><td className="num">{number(r.administration_events)}</td><td className="num">{number(r.quantity_used)}</td></tr>)}</tbody></table>{!loading && !visibleUsageRows.length && <div className="empty">No detailed usage records match these filters.</div>}</div>{pagination(visibleUsageRows.length)}</section>}
-      <footer className="footnote"><strong>Reporting definitions:</strong> Reporting is based on recorded contraceptive administrations. Facilities with no recorded activity may still deliver services. Quantity is an administration-event proxy, not verified stock consumption. Province and city come from facility master data. Facility coverage is filtered by location; year and contraceptive filters apply to activity totals.</footer>
-    </div>
-    <style jsx>{`
-      .analytics{min-height:100vh;background:#f3f6fa;color:#1b2b45;font-family:Arial,Helvetica,sans-serif;padding:30px 22px}.shell{max-width:1450px;margin:auto}.hero{display:flex;align-items:flex-start;justify-content:space-between;gap:22px;flex-wrap:wrap;margin-bottom:24px}.eyebrow{font-size:11px;font-weight:800;letter-spacing:1.5px;color:#0f766e}.hero h1{font-size:30px;letter-spacing:-.6px;margin:10px 0}.hero p,.section-top p{font-size:13px;color:#64748b;margin:6px 0}.updated{font-size:11px;color:#8290a4;display:block;margin-top:10px}.header-actions{display:flex;gap:8px;flex-wrap:wrap}.header-actions a,.header-actions button,.section-top button,.pagination button{border:1px solid #d9e2ec;background:white;color:#26405a;text-decoration:none;padding:10px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer}.filter-panel,.panel,.kpi{background:white;border:1px solid #e1e7ef;border-radius:13px;box-shadow:0 3px 14px rgba(24,45,70,.025)}.filter-panel{padding:21px;margin-bottom:18px}.section-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:19px}.section-top h2{font-size:17px;margin:0}.text-button{border:0!important;color:#0f766e!important;padding:8px!important}.filter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px}.filter-grid label{display:flex;flex-direction:column;gap:7px;font-size:11px;font-weight:700;color:#53647a}.filter-grid select,.filter-grid input{width:100%;min-width:0;border:1px solid #dce4ed;border-radius:8px;background:#fbfcfe;color:#1b2b45;padding:10px;font-size:12px;min-height:39px}.kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-bottom:23px}.kpi{padding:19px;display:flex;flex-direction:column;gap:8px}.kpi span{font-size:12px;font-weight:700;color:#64748b}.kpi strong{font-size:30px;color:#0f766e;font-variant-numeric:tabular-nums}.kpi small{font-size:11px;color:#8793a4}.tabs{display:flex;gap:5px;overflow-x:auto;border-bottom:1px solid #dbe3ed;margin-bottom:18px}.tabs button{white-space:nowrap;border:0;border-bottom:3px solid transparent;background:transparent;padding:13px 17px;font-size:12px;color:#64748b;font-weight:700;cursor:pointer}.tabs button.active{color:#0f766e;border-bottom-color:#0f766e}.charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{padding:21px;margin-bottom:17px;min-width:0}.bar-list{display:flex;flex-direction:column;gap:13px;padding:8px 0}.bar-row{display:grid;grid-template-columns:minmax(100px,160px) minmax(80px,1fr) 55px;align-items:center;gap:11px}.bar-label{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#4c6077}.bar-track{height:13px;background:#edf3f6;border-radius:20px;overflow:hidden}.bar-fill{height:100%;background:linear-gradient(90deg,#0f766e,#2cb9a5);border-radius:20px}.bar-number{text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.primary{background:#0f766e!important;color:white!important;border-color:#0f766e!important}.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:760px}th{text-align:left;background:#f7f9fc;color:#65758b;font-size:10px;letter-spacing:.5px;text-transform:uppercase;padding:13px}td{border-top:1px solid #edf1f5;padding:14px 13px;font-size:12px;color:#45566c}td.name{font-weight:700;color:#263b52}.num{text-align:right;font-variant-numeric:tabular-nums}.status{display:inline-block;border-radius:30px;padding:6px 9px;font-size:10px;font-weight:700;white-space:nowrap}.positive{background:#e2f5ed;color:#087b50}.neutral{background:#fff4de;color:#966014}.pagination{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid #edf1f5;padding-top:15px;margin-top:10px;color:#66768a;font-size:12px}.pagination>div{display:flex;gap:10px;align-items:center}.pagination button:disabled,.section-top button:disabled,.header-actions button:disabled{opacity:.45;cursor:not-allowed}.empty{text-align:center;padding:38px 14px;color:#8090a3;font-size:13px}.footnote{color:#718198;font-size:11px;line-height:1.7;margin:16px 0 30px}.alert{border:1px solid #f2b9b9;background:#fff1f1;color:#a12626;padding:17px;border-radius:9px;margin-bottom:20px}.alert p{font-size:13px}.alert button{padding:8px 12px;border-radius:6px;background:white;border:1px solid #f2b9b9;cursor:pointer}@media(max-width:1050px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:750px){.analytics{padding:17px 12px}.hero h1{font-size:25px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.charts{grid-template-columns:1fr}.bar-row{grid-template-columns:105px minmax(50px,1fr) 45px}.panel,.filter-panel{padding:15px}}@media(max-width:480px){.filter-grid{grid-template-columns:1fr}.kpis{gap:8px}.kpi{padding:13px}.kpi strong{font-size:25px}.tabs button{padding:11px}}
-    `}</style>
-  </main>;
+
+      <section className="report">
+        <div className="report-heading">
+          <div>
+            <h2>Facility Coverage</h2>
+            <p>
+              All registered active facilities,
+              including those with zero recorded
+              administrations.
+            </p>
+          </div>
+          <span>
+            {facilities.length} facilities
+          </span>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>HEALTHCARE FACILITY</th>
+                <th>PROVINCE</th>
+                <th>CITY</th>
+                <th>EVENTS</th>
+                <th>PRODUCTS</th>
+                <th>STATUS</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {facilities.map((f) => (
+                <tr key={f.id}>
+                  <td>
+                    <strong>{f.name}</strong>
+                  </td>
+                  <td>{f.province}</td>
+                  <td>{f.city}</td>
+                  <td>
+                    {f.events.toLocaleString()}
+                  </td>
+                  <td>{f.products.size}</td>
+                  <td>
+                    <span
+                      className={
+                        f.events > 0
+                          ? "status reporting"
+                          : "status no-activity"
+                      }
+                    >
+                      {f.events > 0
+                        ? "Reporting"
+                        : "No recorded activity"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {!loading && !facilities.length && (
+            <div className="empty">
+              No facilities match the filters.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="report">
+        <div className="report-heading">
+          <h2>
+            Usage by{" "}
+            {
+              groupOptions.find(
+                (g) => g.value === groupBy
+              )?.label
+            }
+          </h2>
+          <span>{grouped.length} rows</span>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>GROUP</th>
+                <th>UNIT</th>
+                <th>ADMINISTRATION EVENTS</th>
+                <th>EVENT-BASED QUANTITY</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grouped.map((r) => (
+                <tr
+                  key={`${r.label}-${r.unit}`}
+                >
+                  <td>
+                    <strong>{r.label}</strong>
+                  </td>
+                  <td>{r.unit}</td>
+                  <td>
+                    {r.events.toLocaleString()}
+                  </td>
+                  <td>
+                    {r.quantity.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {!loading && !grouped.length && (
+            <div className="empty">
+              No contraceptive administrations
+              match the selected filters.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="report">
+        <div className="report-heading">
+          <h2>Monthly Contraceptive Usage — Top 10 per Facility</h2>
+          <span>
+            {visibleUsageRows.length} consolidated rows
+          </span>
+          <button type="button" onClick={exportFullAggregatedUsage}
+            disabled={loading || !allAggregatedUsageRows.length}>
+            Export All Consolidated Usage
+          </button>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>MONTH</th>
+                <th>FACILITY</th>
+                <th>PROVINCE</th>
+                <th>CITY</th>
+                <th>CONTRACEPTIVE</th>
+                <th>EVENTS</th>
+                <th>QUANTITY PROXY</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleUsageRows.map(
+                (r, index) => (
+                  <tr
+                    key={`${r.site_id}-${r.period_month}-${r.contraceptive}-${index}`}
+                  >
+                    <td>{r.period_month}</td>
+                    <td>{r.pharmacy}</td>
+                    <td>{r.province}</td>
+                    <td>{r.city}</td>
+                    <td>{r.contraceptive}</td>
+                    <td>
+                      {r.administration_events.toLocaleString()}
+                    </td>
+                    <td>{r.quantity_used.toLocaleString()}</td>
+                  </tr>
+                )
+              )}
+            </tbody>
+          </table>
+
+          {!loading &&
+            !visibleUsageRows.length && (
+              <div className="empty">
+                No detailed usage records for
+                these filters.
+              </div>
+            )}
+        </div>
+      </section>
+
+      <p className="footnote">
+        Reporting is based on recorded
+        contraceptive administrations. A facility
+        with no recorded activity may still be
+        delivering services. Quantity is currently
+        an administration-event proxy, not
+        verified stock consumption. Province and
+        city reflect available facility master data.
+      </p>
+
+      <style jsx>{`
+        .usage-page {
+          min-height: 100vh;
+          background: #f4f7fb;
+          color: #172b4d;
+          padding: 32px;
+          font-family: Arial, sans-serif;
+        }
+
+        .usage-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 20px;
+          flex-wrap: wrap;
+          margin-bottom: 26px;
+        }
+
+        .eyebrow {
+          color: #0d9488;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 1.5px;
+        }
+
+        h1 {
+          font-size: 28px;
+          margin: 12px 0;
+        }
+
+        h2 {
+          font-size: 18px;
+          margin: 0;
+        }
+
+        p {
+          color: #64748b;
+          font-size: 13px;
+          line-height: 1.6;
+        }
+
+        .updated {
+          font-size: 11px;
+        }
+
+        .actions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 9px;
+        }
+
+        button,
+        .actions a {
+          border: 1px solid #dbe4ee;
+          border-radius: 8px;
+          background: white;
+          color: #334155;
+          padding: 11px 14px;
+          font-size: 12px;
+          font-weight: 700;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .actions .primary {
+          background: #0f766e;
+          border-color: #0f766e;
+          color: white;
+        }
+
+        .filters {
+          display: grid;
+          grid-template-columns:
+            repeat(4, minmax(0, 1fr));
+          gap: 16px;
+          background: white;
+          padding: 22px;
+          border: 1px solid #e5eaf1;
+          border-radius: 12px;
+          margin-bottom: 24px;
+        }
+
+        label {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        select,
+        input {
+          width: 100%;
+          min-width: 0;
+          padding: 12px;
+          border: 1px solid #dbe4ee;
+          border-radius: 8px;
+          background: white;
+          color: #172b4d;
+          font: inherit;
+        }
+
+        .stats {
+          display: grid;
+          grid-template-columns:
+            repeat(3, minmax(0, 1fr));
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+
+        .stat {
+          background: white;
+          border: 1px solid #e5eaf1;
+          border-radius: 12px;
+          padding: 22px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .stat span {
+          color: #64748b;
+          font-size: 12px;
+        }
+
+        .stat strong {
+          color: #0f766e;
+          font-size: 30px;
+        }
+
+        .report {
+          background: white;
+          border: 1px solid #e5eaf1;
+          border-radius: 12px;
+          overflow: hidden;
+          margin-bottom: 24px;
+        }
+
+        .report-heading {
+          padding: 22px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .report-heading span {
+          color: #64748b;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+
+        .table-wrap {
+          overflow-x: auto;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 750px;
+        }
+
+        th {
+          background: #f8fafc;
+          color: #64748b;
+          font-size: 11px;
+          padding: 15px;
+          text-align: left;
+        }
+
+        td {
+          padding: 16px;
+          border-top: 1px solid #edf1f5;
+          font-size: 12px;
+        }
+
+        .status {
+          display: inline-block;
+          border-radius: 999px;
+          padding: 6px 10px;
+          font-size: 11px;
+          font-weight: 700;
+        }
+
+        .reporting {
+          color: #047857;
+          background: #d1fae5;
+        }
+
+        .no-activity {
+          color: #92400e;
+          background: #fef3c7;
+        }
+
+        .empty {
+          padding: 35px;
+          text-align: center;
+          color: #64748b;
+        }
+
+        .error {
+          padding: 18px;
+          margin-bottom: 20px;
+          border-radius: 8px;
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #b91c1c;
+        }
+
+        .error p {
+          color: #b91c1c;
+        }
+
+        .footnote {
+          margin-top: 12px;
+          font-size: 12px;
+        }
+
+        @media (max-width: 1000px) {
+          .filters {
+            grid-template-columns:
+              repeat(2, minmax(0, 1fr));
+          }
+
+          .stats {
+            grid-template-columns:
+              repeat(2, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 550px) {
+          .usage-page {
+            padding: 16px;
+          }
+
+          .filters,
+          .stats {
+            grid-template-columns: 1fr;
+          }
+
+          h1 {
+            font-size: 23px;
+          }
+        }
+      `}</style>
+    </main>
+  );
 }
