@@ -441,25 +441,70 @@ export default function PatientRecordPage() {
     async function loadTreatmentHistory() {
       setHistoryLoading(true);
       setHistoryError("");
-      const { data, error } = await supabase
-        .from("medication_administrations")
-        .select(`
-          id, medication_name, dose, route, batch_number,
-          expiry_date, administered_at, injection_site,
-          adverse_events, clinical_notes, next_dose_date,
-          administered_by, healthcare_worker_name, service_type
-        `)
-        .eq("patient_id", patient!.id)
-        .order("administered_at", { ascending: false });
 
-      if (cancelled) return;
-      if (error) {
-        setHistoryError(`Unable to load treatment history: ${error.message}`);
+      try {
+        // healthcare_worker_name is not a column in medication_administrations.
+        // Resolve names separately from staff_profiles using administered_by.
+        const { data, error } = await supabase
+          .from("medication_administrations")
+          .select(`
+            id, medication_name, dose, route, batch_number,
+            expiry_date, administered_at, injection_site,
+            adverse_events, clinical_notes, next_dose_date,
+            administered_by, service_type
+          `)
+          .eq("patient_id", patient!.id)
+          .order("administered_at", { ascending: false });
+
+        if (error) throw error;
+        if (cancelled) return;
+
+        const records = (data ?? []) as Omit<MedicationHistory, "healthcare_worker_name">[];
+        const workerIds = Array.from(
+          new Set(
+            records
+              .map((record) => record.administered_by)
+              .filter((id): id is string => typeof id === "string" && id.length > 0)
+          )
+        );
+
+        const workerNames = new Map<string, string>();
+        if (workerIds.length > 0) {
+          const { data: workers, error: workersError } = await supabase
+            .from("staff_profiles")
+            .select("id, full_name")
+            .in("id", workerIds);
+
+          if (workersError) {
+            // A profile visibility restriction must not hide clinical history.
+            console.warn("Unable to load healthcare worker names:", workersError.message);
+          } else {
+            for (const worker of workers ?? []) {
+              if (worker.id && worker.full_name) {
+                workerNames.set(worker.id, worker.full_name);
+              }
+            }
+          }
+        }
+
+        if (cancelled) return;
+        setTreatmentHistory(
+          records.map((record) => ({
+            ...record,
+            healthcare_worker_name: record.administered_by
+              ? workerNames.get(record.administered_by) ?? null
+              : null,
+          }))
+        );
+      } catch (error: unknown) {
+        if (cancelled) return;
         setTreatmentHistory([]);
-      } else {
-        setTreatmentHistory((data ?? []) as MedicationHistory[]);
+        setHistoryError(
+          `Unable to load treatment history: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
       }
-      setHistoryLoading(false);
     }
 
     void loadTreatmentHistory();
