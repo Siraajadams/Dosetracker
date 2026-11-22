@@ -26,7 +26,31 @@ type Medication = {
   icnCode: string | null;
 };
 
-type StockProduct = { id: string; icn_number: string | null; unit: string | null };
+type StockProduct = {
+  id: string;
+  icn_number: string | null;
+  unit: string | null;
+  name: string | null;
+};
+
+function normalizeProductName(value: string | null | undefined) {
+  return (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Never guess when more than one inventory product could match.
+function matchStockProduct(medication: Medication | undefined, products: StockProduct[]) {
+  if (!medication) return null;
+  const icn = medication.icnCode?.trim().toLowerCase();
+  if (icn) {
+    const matches = products.filter(p => p.icn_number?.trim().toLowerCase() === icn);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) return null;
+  }
+  const name = normalizeProductName(medication.name);
+  if (!name) return null;
+  const matches = products.filter(p => normalizeProductName(p.name) === name);
+  return matches.length === 1 ? matches[0] : null;
+}
 type StockBatch = { id: string; facility_id: string; product_id: string; batch_number: string; expiry_date: string; quantity_on_hand: number };
 
 type MedicationRow = {
@@ -323,7 +347,7 @@ export default function NewMedicationAdministrationPage() {
         }
 
         const [productsResult, batchesResult] = await Promise.all([
-          supabase.from("fp_stock_products").select("id,icn_number,unit").eq("active", true),
+          supabase.from("fp_stock_products").select("*").eq("active", true),
           supabase.from("fp_stock_batches").select("id,facility_id,product_id,batch_number,expiry_date,quantity_on_hand")
             .eq("facility_id", person.site_id).gt("quantity_on_hand", 0),
         ]);
@@ -354,7 +378,14 @@ export default function NewMedicationAdministrationPage() {
         if (!cancelled) {
           setPatient(person as Patient);
           setMedications(items);
-          setStockProducts((productsResult.data || []) as StockProduct[]);
+          setStockProducts(((productsResult.data || []) as Record<string, unknown>[]).map(p => ({
+            id: String(p.id ?? ""),
+            icn_number: p.icn_number == null ? null : String(p.icn_number),
+            unit: p.unit == null ? null : String(p.unit),
+            name: p.name == null
+              ? (p.product_name == null ? (p.medication_name == null ? null : String(p.medication_name)) : String(p.product_name))
+              : String(p.name),
+          })));
           setStockBatches((batchesResult.data || []) as StockBatch[]);
         }
       } catch (err) {
@@ -426,7 +457,7 @@ export default function NewMedicationAdministrationPage() {
       )
     ) {
       setError(
-        "Every medication requires a selection, dose/quantity and route."
+        "Every medication requires a selection, quantity/dose and route."
       );
       return;
     }
@@ -468,7 +499,7 @@ export default function NewMedicationAdministrationPage() {
     const requested = new Map<string, number>();
     for (const row of rows) {
       const medication = medications.find(m => m.id === row.medicationId);
-      const product = stockProducts.find(p => p.icn_number && p.icn_number === medication?.icnCode);
+      const product = matchStockProduct(medication, stockProducts);
       const batch = stockBatches.find(b => b.id === row.batchId && b.product_id === product?.id && b.facility_id === patient.site_id);
       const quantity = Number(row.stockQuantity);
       if (!batch || !Number.isSafeInteger(quantity) || quantity <= 0) {
@@ -741,7 +772,7 @@ export default function NewMedicationAdministrationPage() {
                     </label>
 
                     <label>
-                      Dose / Quantity *
+                      Quantity / Dose *
                       <input
                         required
                         value={row.dose}
@@ -795,7 +826,7 @@ export default function NewMedicationAdministrationPage() {
 
                      {(() => {
                        const medication = medications.find(m => m.id === row.medicationId);
-                       const product = stockProducts.find(p => p.icn_number && p.icn_number === medication?.icnCode);
+                       const product = matchStockProduct(medication, stockProducts);
                        const eligible = stockBatches
                          .filter(b => b.product_id === product?.id && b.facility_id === patient.site_id && b.quantity_on_hand > 0 && b.expiry_date >= administrationDate)
                          .sort((a,b) => a.expiry_date.localeCompare(b.expiry_date));
@@ -805,7 +836,7 @@ export default function NewMedicationAdministrationPage() {
                            Available Stock Batch *
                            <select required value={row.batchId} disabled={!product}
                              onChange={e => updateRow(row.key, "batchId", e.target.value)}>
-                             <option value="">{!product ? "Select a mapped medication" : eligible.length ? "Select received stock batch" : "No valid stock available"}</option>
+                             <option value="">{!row.medicationId ? "Select medication first" : !product ? "No matching inventory product (check ICN/name)" : eligible.length ? "Select received stock batch" : "No unexpired stock available at this clinic"}</option>
                              {eligible.map(b => <option key={b.id} value={b.id}>
                                {b.batch_number} | Exp: {b.expiry_date} | Available: {b.quantity_on_hand} {product?.unit || "units"}
                              </option>)}
