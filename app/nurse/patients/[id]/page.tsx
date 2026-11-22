@@ -61,6 +61,7 @@ type MedicationHistory = {
   clinical_notes: string | null;
   next_dose_date: string | null;
   administered_by: string | null;
+  healthcare_worker_name: string | null;
   service_type: string | null;
 };
 
@@ -446,7 +447,7 @@ export default function PatientRecordPage() {
           id, medication_name, dose, route, batch_number,
           expiry_date, administered_at, injection_site,
           adverse_events, clinical_notes, next_dose_date,
-          administered_by, service_type
+          administered_by, healthcare_worker_name, service_type
         `)
         .eq("patient_id", patient!.id)
         .order("administered_at", { ascending: false });
@@ -744,14 +745,14 @@ export default function PatientRecordPage() {
                             ? new Date(entry.administered_at).toLocaleString("en-ZA")
                             : "Not recorded"
                         } />
-                        <Detail label="Dose" value={display(entry.dose)} />
+                        <Detail label="Quantity" value={display(entry.dose)} />
                         <Detail label="Route" value={display(entry.route)} />
                         <Detail label="Batch number" value={display(entry.batch_number)} />
                         <Detail label="Batch expiry" value={formatDate(entry.expiry_date)} />
                         <Detail label="Injection site" value={display(entry.injection_site)} />
                         <Detail label="Next planned dose" value={formatDate(entry.next_dose_date)} />
                         <Detail label="Service type" value={display(entry.service_type)} />
-                        <Detail label="Administered by (user ID)" value={display(entry.administered_by)} />
+                        <Detail label="Administered by" value={display(entry.healthcare_worker_name)} />
                       </div>
                       {entry.adverse_events && (
                         <Detail label="Adverse events" value={entry.adverse_events} />
