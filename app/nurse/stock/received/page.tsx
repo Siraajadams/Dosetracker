@@ -1,583 +1,235 @@
-
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
-import { getAssignedPharmacies, getProducts, recordStockBatch } from "@/lib/fpStock";
+import { getAssignedPharmacies, getProducts } from "@/lib/fpStock";
 
-type Clinic = {
-  id: string;
-  site_name: string;
+type Clinic = { id: string; site_name: string };
+type Medication = { id: string; name: string; unit: string };
+type DepotOrder = { id: string; order_number: string; status: string; facility_id: string };
+type OrderLine = { id: string; order_id: string; product_id: string; quantity_requested: number; quantity_received: number };
+type ReceiptItem = { key: string; medicationId: string; quantity: string; batchNumber: string; expiryDate: string };
+type ReceiptResult = { receipt_id: string; saved_lines: number; already_saved: boolean; order_status?: string | null };
+const newItem = (medicationId = "", quantity = ""): ReceiptItem => ({
+  key: crypto.randomUUID(), medicationId, quantity, batchNumber: "", expiryDate: "",
+});
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
-
-type Medication = {
-  id: string;
-  name: string;
-};
-
-type ReceiptItem = {
-  key: string;
-  medicationId: string;
-  quantity: string;
-  batchNumber: string;
-  expiryDate: string;
-};
-
-type ReceiptSource = "depot" | "transfer";
-
-function newItem(): ReceiptItem {
-  return {
-    key: Math.random().toString(36).slice(2),
-    medicationId: "",
-    quantity: "",
-    batchNumber: "",
-    expiryDate: "",
-  };
-}
-
-function today() {
-  const date = new Date();
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, "0"),
-    String(date.getDate()).padStart(2, "0"),
-  ].join("-");
-}
-
-function errorText(error: unknown) {
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error
-  ) {
-    return String(error.message);
-  }
-
-  return String(error);
-}
+const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 
 export default function ReceivedPage() {
   const [clinics, setClinics] = useState<Clinic[]>([]);
   const [medications, setMedications] = useState<Medication[]>([]);
-
-  const [destinationClinic, setDestinationClinic] =
-    useState("");
-  const [sourceType, setSourceType] =
-    useState<ReceiptSource>("depot");
-  const [sourceClinic, setSourceClinic] = useState("");
-
-  const [referenceNumber, setReferenceNumber] =
-    useState("");
-  const [receivedDate, setReceivedDate] =
-    useState(today());
+  const [destinationClinic, setDestinationClinic] = useState("");
+  const [orders, setOrders] = useState<DepotOrder[]>([]);
+  const [orderLines, setOrderLines] = useState<OrderLine[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState("");
+  const [referenceNumber, setReferenceNumber] = useState("");
+  const [receivedDate, setReceivedDate] = useState(today());
   const [notes, setNotes] = useState("");
-
-  const [items, setItems] = useState<ReceiptItem[]>([
-    newItem(),
-  ]);
-
+  const [items, setItems] = useState<ReceiptItem[]>([newItem()]);
   const [loading, setLoading] = useState(true);
+  const [loadingOrders, setLoadingOrders] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const receiptId = useRef<string>(crypto.randomUUID());
+  const mounted = useRef(true);
+  const inFlight = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-
+    mounted.current = true;
     async function load() {
-      setLoading(true);
-      setError("");
-
       try {
-        const { data: auth, error: authError } =
-          await supabase.auth.getUser();
-
-        if (authError || !auth.user) {
-          throw new Error(
-            "Please sign in to access stock receiving."
-          );
-        }
-
-        const [assignedClinics, stockProducts] = await Promise.all([
-          getAssignedPharmacies(),
-          getProducts(),
-        ]);
-
-        if (!cancelled) {
-          setClinics(assignedClinics.map((clinic) => ({
-            id: clinic.id,
-            site_name: clinic.name,
-          })));
-          setMedications(stockProducts.map((product) => ({
-            id: product.id,
-            name: product.name,
-          })));
-
-          if (assignedClinics.length === 1) {
-            setDestinationClinic(assignedClinics[0].id);
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(errorText(err));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+        const [assigned, products] = await Promise.all([getAssignedPharmacies(), getProducts()]);
+        if (!mounted.current) return;
+        setClinics(assigned.map(c => ({ id: c.id, site_name: c.name })));
+        setMedications(products.map(p => ({ id: p.id, name: p.name, unit: p.unit })));
+        if (assigned.length === 1) setDestinationClinic(assigned[0].id);
+      } catch (e) { if (mounted.current) setError(errorText(e)); }
+      finally { if (mounted.current) setLoading(false); }
     }
-
     void load();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { mounted.current = false; };
   }, []);
 
-  function updateItem(
-    key: string,
-    field: keyof Omit<ReceiptItem, "key">,
-    value: string
-  ) {
-    setItems((previous) =>
-      previous.map((item) =>
-        item.key === key
-          ? { ...item, [field]: value }
-          : item
-      )
-    );
-  }
+  const loadOrders = useCallback(async (clinicId: string) => {
+    setOrders([]); setOrderLines([]); setLoadingOrders(true);
+    try {
+      const { data, error: orderError } = await supabase.from("fp_depot_orders")
+        .select("id,order_number,status,facility_id")
+        .eq("facility_id", clinicId)
+        .in("status", ["draft", "ready_to_send", "submitted", "partially_received"])
+        .order("created_at", { ascending: false });
+      if (orderError) throw orderError;
+      const loaded = (data ?? []) as DepotOrder[];
+      const ids = loaded.map(o => o.id);
+      let lines: OrderLine[] = [];
+      if (ids.length) {
+        const { data: lineData, error: lineError } = await supabase.from("fp_depot_order_items")
+          .select("id,order_id,product_id,quantity_requested,quantity_received").in("order_id", ids);
+        if (lineError) throw lineError;
+        lines = (lineData ?? []) as OrderLine[];
+      }
+      if (!mounted.current) return;
+      setOrders(loaded); setOrderLines(lines);
+    } catch (e) { if (mounted.current) setError(`Unable to load orders: ${errorText(e)}`); }
+    finally { if (mounted.current) setLoadingOrders(false); }
+  }, []);
 
-  function addMedication() {
-    setItems((previous) => [
-      ...previous,
-      newItem(),
-    ]);
-  }
+  useEffect(() => {
+    setSelectedOrder(""); setItems([newItem()]); setError("");
+    if (destinationClinic) void loadOrders(destinationClinic);
+    else { setOrders([]); setOrderLines([]); }
+  }, [destinationClinic, loadOrders]);
 
-  function removeMedication(key: string) {
-    setItems((previous) =>
-      previous.length > 1
-        ? previous.filter(
-            (item) => item.key !== key
-          )
-        : previous
-    );
-  }
+  const availableLines = useMemo(() => orderLines.filter(l =>
+    l.order_id === selectedOrder && l.quantity_requested > l.quantity_received
+  ), [orderLines, selectedOrder]);
+  const selectedOrderInfo = orders.find(o => o.id === selectedOrder);
+  const medicationMap = useMemo(() => new Map(medications.map(p => [p.id, p])), [medications]);
+  const outstandingMap = useMemo(() => new Map(availableLines.map(l => [l.product_id,
+    l.quantity_requested - l.quantity_received])), [availableLines]);
+  const totalUnits = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
 
-  const totalUnits = items.reduce(
-    (sum, item) =>
-      sum + (Number(item.quantity) || 0),
-    0
-  );
+  function changeOrder(orderId: string) {
+    setSelectedOrder(orderId); setError(""); setSuccess("");
+    if (!orderId) { setItems([newItem()]); return; }
+    const lines = orderLines.filter(l => l.order_id === orderId && l.quantity_requested > l.quantity_received);
+    setItems(lines.map(l => newItem(l.product_id, "")));
+  }
+  function updateItem(key: string, field: keyof Omit<ReceiptItem, "key">, value: string) {
+    setItems(previous => previous.map(item => item.key === key ? { ...item, [field]: value } : item));
+  }
+  function addMedication() { setItems(previous => [...previous, newItem()]); }
+  function removeMedication(key: string) { setItems(previous => previous.filter(item => item.key !== key)); }
 
   async function saveReceipt() {
-    setError("");
-    setSuccess("");
-
-    if (!destinationClinic || !clinics.some((c) => c.id === destinationClinic)) {
-      setError("Select an assigned receiving clinic.");
-      return;
+    if (inFlight.current) return;
+    setError(""); setSuccess("");
+    if (!destinationClinic || !clinics.some(c => c.id === destinationClinic)) {
+      setError("Select an assigned receiving clinic."); return;
     }
-
-    // A transfer must debit the source and credit the destination
-    // in one server-side database transaction. Do not record it as
-    // an ordinary receipt or stock would be created incorrectly.
-    if (sourceType === "transfer") {
-      setError(
-        "Clinic transfers require the atomic transfer workflow. " +
-        "Use KESS for ordinary receipts. No stock has been saved."
-      );
-      return;
+    if (!receivedDate || receivedDate > today()) {
+      setError("Choose a receipt date that is not in the future."); return;
     }
-
-    if (!receivedDate) {
-      setError("Enter the date stock was received.");
-      return;
-    }
-
-    if (!items.length || items.some((item) =>
-      !item.medicationId ||
-      !Number.isSafeInteger(Number(item.quantity)) ||
-      Number(item.quantity) <= 0 ||
-      !item.batchNumber.trim() ||
-      !item.expiryDate ||
-      item.expiryDate < receivedDate
-    )) {
-      setError(
-        "Each medication needs a positive whole-number quantity, " +
-        "batch number and expiry date on or after the receipt date."
-      );
-      return;
-    }
-
-    if (saving) return;
-    setSaving(true);
-
-    let savedCount = 0;
-    try {
-      const reference = [
-        "KESS",
-        referenceNumber.trim() || "No delivery reference",
-        `Received ${receivedDate}`,
-        notes.trim(),
-      ].filter(Boolean).join(" | ");
-
-      // Each RPC must update batch inventory and balances together.
-      // Multiple lines are not one atomic receipt: on a later failure,
-      // earlier lines remain saved. Report this clearly to avoid duplicates.
-      for (const item of items) {
-        await recordStockBatch(
-          destinationClinic,
-          item.medicationId,
-          "received",
-          Number(item.quantity),
-          {
-            batchNumber: item.batchNumber.trim(),
-            expiryDate: item.expiryDate,
-            reference,
-          }
-        );
-        savedCount += 1;
+    if (!items.length) { setError("Add at least one medication."); return; }
+    const totals = new Map<string, number>();
+    for (const item of items) {
+      const q = Number(item.quantity);
+      if (!item.medicationId || !medicationMap.has(item.medicationId) ||
+          !Number.isSafeInteger(q) || q <= 0 || !item.batchNumber.trim() ||
+          !item.expiryDate || item.expiryDate < receivedDate) {
+        setError("Every line requires a medication, positive whole-number quantity, batch number and valid expiry date."); return;
       }
-
-      setSuccess(
-        `Stock received successfully: ${savedCount} medication line(s) ` +
-        "saved to batch inventory. Check Stock Dispensed and stock balances."
-      );
-      setItems([newItem()]);
-      setReferenceNumber("");
-      setNotes("");
-    } catch (err) {
-      setError(
-        `${errorText(err)}. ${savedCount} of ${items.length} lines were saved. ` +
-        (savedCount > 0
-          ? "Do not resubmit the whole receipt: verify saved batches first to avoid double counting."
-          : "No lines from this attempt were confirmed saved.")
-      );
-    } finally {
-      setSaving(false);
+      totals.set(item.medicationId, (totals.get(item.medicationId) ?? 0) + q);
     }
+    if (selectedOrder) {
+      for (const [productId, quantity] of totals) {
+        const outstanding = outstandingMap.get(productId);
+        if (outstanding === undefined || quantity > outstanding) {
+          setError(`Quantity exceeds outstanding order quantity for ${medicationMap.get(productId)?.name ?? productId}.`);
+          return;
+        }
+      }
+    }
+    inFlight.current = true; setSaving(true);
+    try {
+      const payload = items.map(item => ({
+        product_id: item.medicationId,
+        quantity: Number(item.quantity),
+        batch_number: item.batchNumber.trim(),
+        expiry_date: item.expiryDate,
+      }));
+      const { data, error: rpcError } = await supabase.rpc("fp_receive_stock", {
+        p_receipt_id: receiptId.current,
+        p_facility_id: destinationClinic,
+        p_order_id: selectedOrder || null,
+        p_delivery_reference: referenceNumber.trim() || null,
+        p_received_date: receivedDate,
+        p_notes: notes.trim() || null,
+        p_lines: payload,
+      });
+      if (rpcError) throw rpcError;
+      const result = data as ReceiptResult;
+      setSuccess(`Receipt saved: ${result.saved_lines} line(s). ${result.already_saved ? "Already processed (no duplicate stock)." : "Inventory updated."}${result.order_status ? ` Order status: ${result.order_status}.` : ""}`);
+      receiptId.current = crypto.randomUUID();
+      setItems([newItem()]); setReferenceNumber(""); setNotes(""); setSelectedOrder("");
+      await loadOrders(destinationClinic);
+    } catch (e) {
+      // Keep receipt UUID and form intact. Retrying the same receipt is idempotent.
+      setError(`${errorText(e)}. No new receipt has been confirmed. You may retry without changing the form; the same receipt ID will be reused.`);
+    } finally { inFlight.current = false; setSaving(false); }
   }
 
   return (
-    <main className="dt-page">
-      <div className="dt-container">
-        <header className="dt-header">
-          <div>
-            <p className="dt-eyebrow">
-              DOSETRACK / STOCK MANAGEMENT
-            </p>
-            <h1>Stock Received</h1>
-            <p>
-              Receive medications from KESS and update clinic inventory by batch.
-            </p>
-          </div>
-
-          <Link
-            href="/nurse/dashboard"
-            className="dt-button secondary"
-          >
-            Back to Dashboard
-          </Link>
-        </header>
-
-        {error && (
-          <div className="dt-alert error">
-            {error}
-          </div>
-        )}
-
-        {success && (
-          <div className="dt-alert success">
-            {success}
-          </div>
-        )}
-
-        {loading ? (
-          <section className="dt-card">
-            Loading stock information...
-          </section>
-        ) : (
-          <>
-            <section className="dt-card">
-              <h2>Receipt Information</h2>
-
-              <div className="dt-grid">
-                <label>
-                  Receiving Clinic *
-                  <select
-                    value={destinationClinic}
-                    onChange={(e) =>
-                      setDestinationClinic(
-                        e.target.value
-                      )
-                    }
-                  >
-                    <option value="">
-                      Select receiving clinic
-                    </option>
-                    {clinics.map((clinic) => (
-                      <option
-                        key={clinic.id}
-                        value={clinic.id}
-                      >
-                        {clinic.site_name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Stock Source *
-                  <select
-                    value={sourceType}
-                    onChange={(e) => {
-                      setSourceType(
-                        e.target.value as ReceiptSource
-                      );
-                      setSourceClinic("");
-                    }}
-                  >
-                    <option value="depot">
-                      KESS
-                    </option>
-                    <option value="transfer" disabled>
-                      Transfer from Another Clinic (requires transfer workflow)
-                    </option>
-                  </select>
-                </label>
-
-                {sourceType === "transfer" && (
-                  <label>
-                    Transferring Clinic *
-                    <select
-                      value={sourceClinic}
-                      onChange={(e) =>
-                        setSourceClinic(e.target.value)
-                      }
-                    >
-                      <option value="">
-                        Select source clinic
-                      </option>
-                      {clinics
-                        .filter(
-                          (clinic) =>
-                            clinic.id !==
-                            destinationClinic
-                        )
-                        .map((clinic) => (
-                          <option
-                            key={clinic.id}
-                            value={clinic.id}
-                          >
-                            {clinic.site_name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                )}
-
-                <label>
-                  Delivery / Transfer Reference
-                  <input
-                    value={referenceNumber}
-                    onChange={(e) =>
-                      setReferenceNumber(
-                        e.target.value
-                      )
-                    }
-                    placeholder="KESS delivery note or transfer reference"
-                  />
-                </label>
-
-                <label>
-                  Date Received *
-                  <input
-                    type="date"
-                    value={receivedDate}
-                    onChange={(e) =>
-                      setReceivedDate(e.target.value)
-                    }
-                  />
-                </label>
-              </div>
-            </section>
-
-            <section className="dt-card">
-              <div className="dt-heading">
-                <div>
-                  <h2>Medications Received</h2>
-                  <p>
-                    Add multiple medications to the
-                    same receipt.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  className="dt-button secondary"
-                  onClick={addMedication}
-                >
-                  + Add Medication
-                </button>
-              </div>
-
-              {items.map((item, index) => (
-                <div
-                  key={item.key}
-                  className="dt-medication"
-                >
-                  <div className="dt-heading">
-                    <h3>
-                      Medication {index + 1}
-                    </h3>
-
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        className="dt-remove"
-                        onClick={() =>
-                          removeMedication(
-                            item.key
-                          )
-                        }
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="dt-grid">
-                    <label>
-                      Medication *
-                      <select
-                        value={item.medicationId}
-                        onChange={(e) =>
-                          updateItem(
-                            item.key,
-                            "medicationId",
-                            e.target.value
-                          )
-                        }
-                      >
-                        <option value="">
-                          Select medication
-                        </option>
-                        {medications.map(
-                          (medication) => (
-                            <option
-                              key={medication.id}
-                              value={medication.id}
-                            >
-                              {medication.name}
-                            </option>
-                          )
-                        )}
-                      </select>
-                    </label>
-
-                    <label>
-                      Quantity Received *
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={item.quantity}
-                        onChange={(e) =>
-                          updateItem(
-                            item.key,
-                            "quantity",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </label>
-
-                    <label>
-                      Batch Number *
-                      <input
-                        value={item.batchNumber}
-                        onChange={(e) =>
-                          updateItem(
-                            item.key,
-                            "batchNumber",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </label>
-
-                    <label>
-                      Expiry Date *
-                      <input
-                        type="date"
-                        value={item.expiryDate}
-                        onChange={(e) =>
-                          updateItem(
-                            item.key,
-                            "expiryDate",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </label>
-                  </div>
-                </div>
-              ))}
-            </section>
-
-            <section className="dt-card">
-              <h2>Receipt Summary</h2>
-
-              <div className="dt-summary">
-                <div>
-                  <span>Medication Lines</span>
-                  <strong>{items.length}</strong>
-                </div>
-
-                <div>
-                  <span>Total Units</span>
-                  <strong>{totalUnits}</strong>
-                </div>
-              </div>
-
-              <label>
-                Receipt Notes
-                <textarea
-                  rows={3}
-                  value={notes}
-                  onChange={(e) =>
-                    setNotes(e.target.value)
-                  }
-                  placeholder="Delivery condition, discrepancies or other notes"
-                />
-              </label>
-            </section>
-
-            <div className="dt-actions">
-              <Link
-                href="/nurse/dashboard"
-                className="dt-button secondary"
-              >
-                Cancel
-              </Link>
-
-              <button
-                type="button"
-                className="dt-button primary"
-                onClick={saveReceipt}
-                disabled={saving}
-              >
-                {saving
-                  ? "Processing..."
-                  : "Save Stock Received"}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-
+    <main className="dt-page"><div className="dt-container">
+      <header className="dt-header"><div>
+        <p className="dt-eyebrow">DOSETRACK / STOCK MANAGEMENT</p>
+        <h1>Stock Received</h1>
+        <p>Receive stock from KESS, with or without an existing medication order.</p>
+      </div><Link href="/nurse/dashboard" className="dt-button secondary">Back to Dashboard</Link></header>
+      {error && <div className="dt-alert error" role="alert">{error}</div>}
+      {success && <div className="dt-alert success" role="status">{success}</div>}
+      {loading ? <section className="dt-card">Loading stock information...</section> : <>
+        <section className="dt-card"><h2>Receipt Information</h2><div className="dt-grid">
+          <label>Receiving Clinic *<select value={destinationClinic} disabled={saving}
+            onChange={e => setDestinationClinic(e.target.value)}>
+            <option value="">Select receiving clinic</option>
+            {clinics.map(c => <option key={c.id} value={c.id}>{c.site_name}</option>)}
+          </select></label>
+          <label>Stock Source<select disabled value="KESS"><option value="KESS">KESS</option></select></label>
+          <label>Link to Existing Order (optional)<select disabled={!destinationClinic || loadingOrders || saving}
+            value={selectedOrder} onChange={e => changeOrder(e.target.value)}>
+            <option value="">No order — standalone KESS receipt</option>
+            {orders.filter(o => orderLines.some(l => l.order_id === o.id && l.quantity_requested > l.quantity_received))
+              .map(o => <option key={o.id} value={o.id}>{o.order_number} ({o.status})</option>)}
+          </select></label>
+          <label>KESS Delivery Note Reference<input value={referenceNumber} disabled={saving}
+            onChange={e => setReferenceNumber(e.target.value)} placeholder="Delivery note / invoice number" /></label>
+          <label>Date Received *<input type="date" value={receivedDate} max={today()} disabled={saving}
+            onChange={e => setReceivedDate(e.target.value)} /></label>
+        </div>
+          {selectedOrderInfo && <p className="dt-order-note">Linked order: <strong>{selectedOrderInfo.order_number}</strong>. Enter the actual quantities received; leave unreceived medications blank and remove their lines before saving.</p>}
+        </section>
+        <section className="dt-card"><div className="dt-heading"><div><h2>Medications Received</h2>
+          <p>Multiple batches of the same medication can be entered separately.</p></div>
+          <button type="button" className="dt-button secondary" disabled={saving}
+            onClick={addMedication}>+ Add Medication</button></div>
+          {items.map((item, index) => <div key={item.key} className="dt-medication">
+            <div className="dt-heading"><h3>Medication {index + 1}</h3>
+              <button type="button" className="dt-remove" disabled={saving}
+                onClick={() => removeMedication(item.key)}>Remove</button></div>
+            <div className="dt-grid">
+              <label>Medication *<select value={item.medicationId} disabled={saving}
+                onChange={e => updateItem(item.key, "medicationId", e.target.value)}>
+                <option value="">Select medication</option>
+                {(selectedOrder ? medications.filter(p => outstandingMap.has(p.id)) : medications)
+                  .map(p => <option key={p.id} value={p.id}>{p.name} ({p.unit || "units"})</option>)}
+              </select></label>
+              <label>Quantity Received * {selectedOrder && item.medicationId ? `(Outstanding: ${outstandingMap.get(item.medicationId) ?? 0})` : ""}
+                <input type="number" min="1" step="1" value={item.quantity} disabled={saving}
+                  onChange={e => updateItem(item.key, "quantity", e.target.value)} /></label>
+              <label>Batch Number *<input value={item.batchNumber} disabled={saving}
+                onChange={e => updateItem(item.key, "batchNumber", e.target.value)} /></label>
+              <label>Expiry Date *<input type="date" value={item.expiryDate} min={receivedDate} disabled={saving}
+                onChange={e => updateItem(item.key, "expiryDate", e.target.value)} /></label>
+            </div></div>)}
+        </section>
+        <section className="dt-card"><h2>Receipt Summary</h2><div className="dt-summary">
+          <div><span>Medication Lines</span><strong>{items.length}</strong></div>
+          <div><span>Total Units</span><strong>{totalUnits}</strong></div></div>
+          <label>Receipt Notes<textarea rows={3} value={notes} disabled={saving}
+            onChange={e => setNotes(e.target.value)} placeholder="Delivery condition, discrepancies or other notes" /></label>
+        </section>
+        <div className="dt-actions"><Link href="/nurse/dashboard" className="dt-button secondary">Cancel</Link>
+          <button type="button" className="dt-button primary" onClick={() => void saveReceipt()}
+            disabled={saving || loadingOrders}>{saving ? "Processing..." : "Save Stock Received"}</button></div>
+      </>}
+    </div>
       <style jsx global>{`
         .dt-page {
           min-height: 100vh;
